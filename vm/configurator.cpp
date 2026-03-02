@@ -94,7 +94,7 @@ static const Entry MAP[] = {
     CFG_PIN ("lcd","dc",         lcd.dc),
     CFG_PIN ("lcd","rst",        lcd.rst),
     CFG_INT ("lcd","rotation",   lcd.rotation),
-    CFG_INT ("lcd","color",      lcd.color),
+    CFG_BOOL ("lcd","colorBGR",      lcd.colorBGR),
     CFG_BOOL("lcd","invert",     lcd.invert),
     CFG_PIN ("lcd","backlight",  lcd.backlight),
     CFG_INT ("lcd","width",      lcd.width),

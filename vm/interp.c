@@ -207,42 +207,6 @@ static OBJ primUSecsSince(int argCount, OBJ *args) {
 	return int2obj(deltaTime);
 }
 
-// String Access
-
-static inline char * nextUTF8(char *s) {
-	// Return a pointer to the start of the UTF8 character following the given one.
-	// If s points to a null byte (i.e. end of the string) return it unchanged.
-
-	if (!*s) return s; // end of string
-	if ((uint8) *s < 128) return s + 1; // single-byte character
-	if (0xC0 == (*s & 0xC0)) s++; // start of multi-byte character
-	while (0x80 == (*s & 0xC0)) s++; // skip continuation bytes
-	return s;
-}
-
-static int countUTF8(char *s) {
-	int count = 0;
-	while (*s) {
-		s = nextUTF8(s);
-		count++;
-	}
-	return count;
-}
-
-static OBJ charAt(OBJ stringObj, int i) {
-	char *start = obj2str(stringObj);
-	while (i-- > 1) { // find start of the ith Unicode character
-		if (!*start) return fail(indexOutOfRangeError); // end of string
-		start = nextUTF8(start);
-	}
-	int byteCount = nextUTF8(start) - start;
-	OBJ result = newString(byteCount);
-	if (result) {
-		memcpy(obj2str(result), start, byteCount);
-	}
-	return result;
-}
-
 // Board Type
 
 #define BOARD_TYPE_SIZE 32

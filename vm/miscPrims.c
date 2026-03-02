@@ -9,6 +9,7 @@
 
 #include <math.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -287,6 +288,26 @@ static OBJ primScriptTooLarge(int argCount, OBJ *args) {
 	return fail(scriptTooLarge);
 }
 
+// utility used by JSON primitives
+
+static char intString[16];
+
+static char * asString(OBJ arg) {
+	// If the arg is a string, return it. If it is an integer, convert it to a string
+	// and return that. If it is neither, return the empty string.
+
+	if (IS_TYPE(arg, StringType)) {
+		return obj2str(arg);
+	} else if (isInt(arg)) {
+		snprintf(intString, 15, "%d", obj2int(arg));
+		return intString;
+	} else {
+		return (char *) "";
+	}
+}
+
+// JSON primitives
+
 static OBJ jsonValue(char *item) {
 	char buf[1024];
 	char *end;
@@ -319,9 +340,9 @@ static OBJ primJSONGet(int argCount, OBJ *args) {
 
 	if (argCount < 2) return fail(notEnoughArguments);
 	if (!IS_TYPE(args[0], StringType)) return fail(needsStringError);
-	if (!IS_TYPE(args[1], StringType)) return fail(needsStringError);
+	if (!(IS_TYPE(args[1], StringType) || isInt(args[1]))) return fail(needsStringError);
 	char *json = obj2str(args[0]);
-	char *path = obj2str(args[1]);
+	char *path = asString(args[1]);
 	int i = ((argCount > 2) && isInt(args[2])) ? obj2int(args[2]) : -1;
 
 	char *item = tjr_atPath(json, path);
@@ -345,9 +366,9 @@ static OBJ primJSONCount(int argCount, OBJ *args) {
 
 	if (argCount < 2) return fail(notEnoughArguments);
 	if (!IS_TYPE(args[0], StringType)) return fail(needsStringError);
-	if (!IS_TYPE(args[1], StringType)) return fail(needsStringError);
+	if (!(IS_TYPE(args[1], StringType) || isInt(args[1]))) return fail(needsStringError);
 	char *json = obj2str(args[0]);
-	char *path = obj2str(args[1]);
+	char *path = asString(args[1]);
 
 	char *item = tjr_atPath(json, path);
 	return int2obj(tjr_count(item));
@@ -358,10 +379,10 @@ static OBJ primJSONValueAt(int argCount, OBJ *args) {
 
 	if (argCount < 3) return fail(notEnoughArguments);
 	if (!IS_TYPE(args[0], StringType)) return fail(needsStringError);
-	if (!IS_TYPE(args[1], StringType)) return fail(needsStringError);
+	if (!(IS_TYPE(args[1], StringType) || isInt(args[1]))) return fail(needsStringError);
 	if (!isInt(args[2])) return fail(needsIntegerError);
 	char *json = obj2str(args[0]);
-	char *path = obj2str(args[1]);
+	char *path = asString(args[1]);
 	int i = obj2int(args[2]);
 
 	char *item = tjr_atPath(json, path);
@@ -373,10 +394,10 @@ static OBJ primJSONKeyAt(int argCount, OBJ *args) {
 
 	if (argCount < 3) return fail(notEnoughArguments);
 	if (!IS_TYPE(args[0], StringType)) return fail(needsStringError);
-	if (!IS_TYPE(args[1], StringType)) return fail(needsStringError);
+	if (!(IS_TYPE(args[1], StringType) || isInt(args[1]))) return fail(needsStringError);
 	if (!isInt(args[2])) return fail(needsIntegerError);
 	char *json = obj2str(args[0]);
-	char *path = obj2str(args[1]);
+	char *path = asString(args[1]);
 	int i = obj2int(args[2]);
 
 	char key[100];

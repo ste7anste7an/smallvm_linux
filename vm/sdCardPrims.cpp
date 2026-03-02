@@ -41,6 +41,24 @@ SdFat SD;
 	#define DEFAULT_CS_PIN SS
 #endif
 
+#if defined(DOMINO4_CWA)
+	// SS must defined before including SdFat.h
+	// #define SS 35
+	#undef DEFAULT_CS_PIN
+	#define DEFAULT_CS_PIN 35
+	#define MOSI_PIN 37
+	#define MISO_PIN 38
+	#define SCK_PIN 36
+#elif defined(SPRINGBOT)
+	// SS must defined before including SdFat.h
+	// #define SS 34
+	#undef DEFAULT_CS_PIN
+	#define DEFAULT_CS_PIN 34
+	#define MOSI_PIN 35
+	#define MISO_PIN 37
+	#define SCK_PIN 36
+#endif
+
 // Variables
 
 #define MAX_FILE_PATH 128
@@ -60,6 +78,10 @@ static FileEntry fileEntry[FILE_ENTRIES]; // fileEntry[] records open files
 // Helper functions
 
 static void initSDCard(int chipSelectPin) {
+	#if defined(SPRINGBOT)
+		SPI.end();
+		SPI.begin(SCK_PIN, MISO_PIN, MOSI_PIN, DEFAULT_CS_PIN);
+	#endif
 	if (sdCardCSPin != chipSelectPin) {
 		if (sdCardCSPin != -1) SD.end();
 		if (chipSelectPin < 0) chipSelectPin = DEFAULT_CS_PIN;
@@ -324,7 +346,7 @@ static OBJ primAppendLine(int argCount, OBJ *args) {
 	int i = entryFor(fileName);
 	if (i < 0) return falseObj;
 
-	if ((i >= 0) && fileEntry[i].file)  {
+	if ((i >= 0) && fileEntry[i].file) {
 		int oldPos = fileEntry[i].file.position();
 		int oldSize = fileEntry[i].file.size();
 		if (oldPos != oldSize) fileEntry[i].file.seekEnd(); // seek to current end

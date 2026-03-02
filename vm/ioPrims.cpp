@@ -416,14 +416,6 @@ void hardwareInit() {
 	#define INVERT_USER_LED true
 	static const int analogPin[] = {A0, A1, A2, A3, A4, A5};
 
-#elif defined(ARDUINO_TEENSY31)
-	#define BOARD_TYPE "Teensy 3.1"
-	#define DIGITAL_PINS 24
-	#define ANALOG_PINS 10
-	#define TOTAL_PINS 34
-	static const int analogPin[] = {A0, A1, A2, A3, A4, A5, A6, A7, A8, A9};
-	#define PIN_LED 13
-
 #elif defined(ARDUINO_TEENSY40)
 	// placeholder; not tested
 	#define BOARD_TYPE "Teensy 4.0"
@@ -727,6 +719,7 @@ extern "C" void esp8266DeepSleep(uint64_t usecs) {
 	#define ANALOG_PINS 16
 	#define TOTAL_PINS 40
 	static const int analogPin[] = {};
+	#define PIN_LED -1 // no built-in LED
 	#define DEFAULT_TONE_PIN 2
 	// Pins 5 and 15 are reserved for use by the M5Stack Core2 TFT display
 	static char reservedPin[TOTAL_PINS] = {
@@ -921,6 +914,60 @@ extern "C" void esp8266DeepSleep(uint64_t usecs) {
 			0, 1, 1, 1, 1, 1, 1, 1, 1, 1,
 			0, 0};
 
+#elif defined(DOMINO4_CWA)
+	#define BOARD_TYPE "DOMINO4 CWA"
+	#define DIGITAL_PINS 43
+	#define ANALOG_PINS 20
+	#define TOTAL_PINS 43
+	static const int analogPin[] = {};
+
+	#define PIN_LED 40
+	#define PIN_BUTTON_A 0
+	#undef PIN_NEOPIXEL
+	#define PIN_NEOPIXEL 39
+
+	// See https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/peripherals/gpio.html
+	// strapping pins 0 (Boot), 3 (JTAG), 45 (VSPI), 46 (LOG)
+	// SPI (26-32); also 33-37 on boards with Octal SPI Flash PSRAM
+	// USB pins: 19 (USB D-), 20 (USB D+)
+	// also possibly: 39-42 (JTAG pins)
+	static const char reservedPin[TOTAL_PINS] = {
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+		1, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+		1, 1, 1, 0, 0, 0, 0, 0, 0, 0,
+		0, 0, 0};
+
+#elif defined(SPRINGBOT)
+	#if defined(SPRINGBOT_GOLD)
+		#define BOARD_TYPE "Springbot Gold"
+	#else
+		#define BOARD_TYPE "Springbot Green"
+	#endif
+	#define DIGITAL_PINS 43
+	#define ANALOG_PINS 20
+	#define TOTAL_PINS 43
+	static const int analogPin[] = {};
+
+	#define PIN_LED 40
+	#define PIN_BUTTON_A 11
+	#define PIN_BUTTON_B 12
+	#define DEFAULT_TONE_PIN 33 // maps to speaker pin
+	#undef PIN_NEOPIXEL
+	#define PIN_NEOPIXEL 39
+
+	// See https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/peripherals/gpio.html
+	// strapping pins 0 (Boot), 3 (JTAG), 45 (VSPI), 46 (LOG)
+	// SPI (26-32); also 33-37 on boards with Octal SPI Flash PSRAM
+	// USB pins: 19 (USB D-), 20 (USB D+)
+	// also possibly: 39-42 (JTAG pins)
+	static const char reservedPin[TOTAL_PINS] = {
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+		1, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+		1, 1, 1, 0, 0, 0, 0, 0, 0, 0,
+		0, 0, 0};
+
 #elif defined(ESP32_S2)
 	#define BOARD_TYPE "ESP32-S2"
 	#define DIGITAL_PINS 48
@@ -950,13 +997,14 @@ extern "C" void esp8266DeepSleep(uint64_t usecs) {
 		0, 0, 0, 0, 0, 0, 0, 0};
 
 #elif defined(ESP32_S3)
-		//sodb
-	#define BOARD_TYPE "ESP32"
-	#define DIGITAL_PINS 43
+	#define BOARD_TYPE "ESP32-S3"
+	#define DIGITAL_PINS 49
 	#define ANALOG_PINS 20
-	#define TOTAL_PINS 43
+	#define TOTAL_PINS 49
 	static const int analogPin[] = {};
-	#ifdef LED_BUILTIN
+	#ifdef METRO_S3
+		#define PIN_LED 13
+	#elif defined(LED_BUILTIN)
 		#define PIN_LED LED_BUILTIN
 	#elif !defined(PIN_LED)
 		#define PIN_LED -1
@@ -969,16 +1017,15 @@ extern "C" void esp8266DeepSleep(uint64_t usecs) {
 		#endif
 	#endif
 	// See https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/peripherals/gpio.html
-	// strapping pins 0 (Boot), 3 (JTAG), 45 (VSPI), 46 (LOG)
-	// SPI (26-32); also 33-37 on boards with Octal SPI Flash PSRAM
+	// Reserved FLASH and RAM SPI: 26-32 plus 33-37 on boards with Octal SPI Flash PSRAM
 	// USB pins: 19 (USB D-), 20 (USB D+)
-	// also possibly: 39-42 (JTAG pins)
+	// Strapping pins: 0 (Boot), 3 (JTAG), 45 (VSPI), 46 (LOG) (useable with care)
 	static const char reservedPin[TOTAL_PINS] = {
 		0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 		0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
 		1, 0, 1, 1, 1, 1, 1, 1, 1, 1,
-		1, 1, 1, 1, 1, 0, 0, 0, 0, 0,
-		0, 0, 0};
+		1, 1, 1, 1, 1, 1, 1, 1, 0, 0,
+		0, 0, 0, 0, 0, 0, 0, 0, 0};
 
 #elif defined(ESP32_C3)
 	#define BOARD_TYPE "ESP32-C3"
@@ -1191,6 +1238,22 @@ extern "C" void esp8266DeepSleep(uint64_t usecs) {
 		0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 		0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
+#elif defined(PI_BODY)
+
+	#define BOARD_TYPE "PiBody"
+	#define DIGITAL_PINS 30
+	#define ANALOG_PINS 4
+	#define TOTAL_PINS DIGITAL_PINS
+	static const int analogPin[] = {A0, A1, A2, A3};
+	#define PIN_BUTTON_A 20
+	#define PIN_BUTTON_B 21
+	#undef BUTTON_PRESSED
+	#define BUTTON_PRESSED HIGH
+	static const char reservedPin[TOTAL_PINS] = {
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		0, 0, 0, 1, 1, 1, 0, 0, 0, 0};
+
 #elif defined(ARDUINO_ARCH_RP2040)
 
 	#define BOARD_TYPE "RP2040"
@@ -1228,7 +1291,7 @@ extern "C" void esp8266DeepSleep(uint64_t usecs) {
 #elif defined(DUELink)
 
 	#define BOARD_TYPE "DUELink"
-	#define DIGITAL_PINS 27
+	#define DIGITAL_PINS 29
 	#define ANALOG_PINS 5
 	#define TOTAL_PINS 60
 	#define PIN_LED 15 // PB_8
@@ -1238,32 +1301,34 @@ extern "C" void esp8266DeepSleep(uint64_t usecs) {
 	// 42 (PF_2) - reset
 	// 49 (PA_12) - USB P
 	// 50 (PA_11) - USB N
-	// 47 (PA_3) - Downlink RX (serial)
-	// 52 (PA_2) - Downlink TX (serial)
 
-	// PA_5, D13, edge pin 21 is the buzzer
 	// PB_0, D19, edge pin  9 is the light sensor
+	// PA_5, D13, edge pin 21 is the buzzer
+	// PA_2, D52, edge pin 25 is downlink TX
+	// PA_3, D47, edge pin 26 is downlink RX
 	static const char cincoEdgePin[DIGITAL_PINS] = {
 		16, 17, 18, 14, 29, 28,  8,  10,  37, 19,
 		 2, 27, 32,  9,  5,  4, 33, 255, 255,  0,
-		 1, 13,  7, 12, 15, 54, 11}; // row pins: 7, 12, 15, 54, 11
+		 1, 13,  7, 12, 15, 52, 47,  54, 11}; // row pins: 7, 12, 15, 54, 11
 
 	// PA_5, D13, edge pin 21 is the buzzer
 	// PC_6, D29, edge pin 22 is the display reset pin
 	// PA_6, D12, edge pin 23 is the light sensor
+	// PA_2, D52, edge pin 25 is downlink TX
+	// PA_3, D47, edge pin 26 is downlink RX
 	static const char pixoEdgePin[DIGITAL_PINS] = {
 		16, 17, 18, 11, 54, 28,  8,  10,  37, 19,
 		 2, 27,  7,  9,  5,  4, 33, 255, 255,  0,
-		 1, 13, 29, 12, 15, 14, 32}; // unused pins: 12, 15, 14, 32
+		 1, 13, 29, 12, 15, 52, 47, 14, 32}; // unused pins: 12, 15, 14, 32
 
-	// PA_9, D8, edge pin 21 is UART1_TX (uplink UART and often USB, too)
+	// PA_9,  D8, edge pin 21 is UART1_TX (uplink UART and often USB, too)
 	// PA_10, D2, edge pin 22 is UART1_RX (uplink UART and often USB, too)
-	// 52 (PA_2) - Downlink TX (downlink UART)
-	// 47 (PA_3) - Downlink RX (downlink UART)
+	// PA_2, D52, edge pin 25 is downlink TX
+	// PA_3, D47, edge pin 26 is downlink RX
 	static const char dueStandardPin[DIGITAL_PINS] = {
 		15, 16, 17, 18, 13, 12, 11,  7, 54, 19,
 		33, 29,  9,  5,  4,  1,  0, 37, 14, 10,
-		28,  8,  2, 27, 32, 52, 47};
+		28,  8,  2, 27, 32, 52, 47, 255, 255};
 
 	// Analog pin names for DUELink boards
 	// Note: CincoBit edge pins 3, 4, and 12 are not analog capable
@@ -2024,11 +2089,10 @@ void primSetUserLED(OBJ *args) {
 		} else {
 			primMBUnplot(2, coords);
 		}
-	#elif defined(ARDUINO_CITILAB_ED1) || defined(ARDUINO_M5Stack_Core_ESP32) || \
-		defined(ARDUINO_M5STACK_Core2) || defined(TTGO_DISPLAY)|| defined(COCUBE) || \
-		defined(BUILT_IN_DISPLAY)
-			tftSetHugePixel(3, 1, (trueObj == args[0]));
 	#else
+		if (useTFT) {
+			tftSetHugePixel(3, 1, (trueObj == args[0]));
+		}
 		if (PIN_LED < 0) return; // board does not have a user LED
 		if (PIN_LED < TOTAL_PINS) {
 			SET_MODE(PIN_LED, OUTPUT);
@@ -2076,6 +2140,12 @@ OBJ primButtonA(OBJ *args) {
 			return (buttonReadings[4] < CAP_THRESHOLD) ? trueObj : falseObj;
 		#elif defined(FOXBIT)
 			setPinMode(PIN_BUTTON_A, INPUT_PULLUP); // ESP32 pin number not edge pin
+		#elif defined(SPRINGBOT_GREEN)
+			if (touchRead(T11)>25700) return trueObj;
+			else return falseObj;
+		#elif defined(SPRINGBOT_GOLD)
+			if (touchRead(T11)>27700) return trueObj;
+			else return falseObj;
 		#elif defined(ARDUINO_NRF52840_CLUE) || defined(ARDUINO_ARCH_ESP32) || \
 			  defined(ESP8266) || defined(M5STAMP)
 			SET_MODE(PIN_BUTTON_A, INPUT_PULLUP);
@@ -2105,6 +2175,12 @@ OBJ primButtonB(OBJ *args) {
 			return (buttonReadings[3] < CAP_THRESHOLD) ? trueObj : falseObj;
 		#elif defined(FOXBIT)
 			setPinMode(PIN_BUTTON_B, INPUT_PULLUP); // ESP32 pin number not edge pin
+		#elif defined(SPRINGBOT_GREEN)
+			if (touchRead(T12)>19300) return trueObj;
+			else return falseObj;
+		#elif defined(SPRINGBOT_GOLD)
+			if (touchRead(T12)>15700) return trueObj;
+			else return falseObj;
 		#elif defined(ARDUINO_NRF52840_CLUE)
 			SET_MODE(PIN_BUTTON_B, INPUT_PULLUP);
 		#else

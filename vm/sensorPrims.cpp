@@ -39,6 +39,9 @@
 #elif defined(WUKONG2040)
 	#define PIN_WIRE_SCL 17
 	#define PIN_WIRE_SDA 16
+#elif defined(PI_BODY)
+	#define PIN_WIRE_SCL 1
+	#define PIN_WIRE_SDA 0
 #elif defined(ARDUINO_Mbits)
 	// Note: SDA and SCL are reversed from most other ESP32 boards!
 	#define PIN_WIRE_SCL 21
@@ -55,6 +58,9 @@
 #elif defined(ARDUINO_SEEED_XIAO_RP2350)
 	#define PIN_WIRE_SCL 7
 	#define PIN_WIRE_SDA 6
+#elif defined(METRO_S3)
+	#define PIN_WIRE_SCL 48
+	#define PIN_WIRE_SDA 47
 #elif defined(DUELink)
 	// 0 and 1 are edge connector pins 19 and 20 or DUELink standard pins 16 and 15
 	#define PIN_WIRE_SCL 1
@@ -69,6 +75,12 @@
 	#define PIN_WIRE_SCL 48	
 	#define PIN_WIRE_SDA 47 
 
+#elif defined(DOMINO4_CWA)
+	#define PIN_WIRE_SCL 18
+	#define PIN_WIRE_SDA 17
+#elif defined(SPRINGBOT)
+	#define PIN_WIRE_SCL 4
+	#define PIN_WIRE_SDA 5
 #elif !defined(PIN_WIRE_SCL)
 	#if defined(PIN_WIRE0_SCL)
 		#define PIN_WIRE_SCL PIN_WIRE0_SCL
@@ -130,6 +142,10 @@ static void startWire() {
 		Wire.setTimeout(100, true);
 	#endif
 	wireStarted = true;
+
+	// Ping the DUELink address so any connected DUELink modules will use I2C mode.
+	// This must be the first I2C transaction after power up.
+	readI2CReg(82, 0);
 }
 
 int readI2CReg(int deviceID, int reg) {
@@ -281,7 +297,7 @@ static OBJ primInternalI2cSet(int argCount, OBJ *args) { return fail(primitiveNo
 
 #endif
 
-static OBJ primI2cExists(int argCount, OBJ *args) {
+OBJ primI2cExists(int argCount, OBJ *args) {
 	// Return true if there is an i2c device at the given address. Used for i2c scanning.
 
 	if ((argCount < 1) || !isInt(args[0])) return falseObj;
@@ -460,11 +476,27 @@ static OBJ primI2cSetPins(int argCount, OBJ *args) {
 	#define PIN_SPI_SS   (9u)
 	#define PIN_SPI_SCK  (10u)
 	#define PIN_SPI_MOSI (11u)
+#elif defined(PICO) && defined(TFT_CONFIG)
+	//#define SPI SPI0
+	#define PIN_SPI_MISO (8u)
+	#define PIN_SPI_SS   (9u)
+	#define PIN_SPI_SCK  (10u)
+	#define PIN_SPI_MOSI (11u)
 #elif defined(WUKONG2040)
 	#define PIN_SPI_MISO (4u)
 	#define PIN_SPI_SS   (5u)
 	#define PIN_SPI_SCK  (2u)
 	#define PIN_SPI_MOSI (3u)
+#elif defined(DOMINO4_CWA)
+	#define PIN_SPI_MISO (38u)
+	#define PIN_SPI_SS   (35u)
+	#define PIN_SPI_SCK  (36u)
+	#define PIN_SPI_MOSI (37u)
+#elif defined(SPRINGBOT)
+	#define PIN_SPI_MISO (37u)
+	#define PIN_SPI_SS   (34u)
+	#define PIN_SPI_SCK  (36u)
+	#define PIN_SPI_MOSI (35u)
 #elif defined(ARDUINO_ARCH_RP2040) && !defined(PIN_SPI_MISO)
 	#define PIN_SPI_MISO PIN_SPI0_MISO
 	#define PIN_SPI_MOSI PIN_SPI0_MOSI
@@ -479,7 +511,7 @@ static int spiSpeed = 1000000;
 static int spiMode = SPI_MODE0;
 static BitOrder spiBitOrder = MSBFIRST;
 
-static void initSPI() {
+void initSPI() {
 	#if defined(ARDUINO_ARCH_ESP32)
 		setPinMode(MISO, INPUT);
 		setPinMode(MOSI, OUTPUT);
@@ -572,6 +604,50 @@ OBJ primSPIExchange(int argCount, OBJ *args) {
 		data[i] = SPI.transfer(data[i]);
 	}
 	SPI.endTransaction();
+	return falseObj;
+}
+
+OBJ primSPISetPins(int argCount, OBJ *args) {
+	// Set the SPI clock, MOSI, and MISO pins.
+	// Note: This changes the pins for the default SPI device on boards that support that.
+	// On the Raspberry Pi Pico and Pico2 boards you just use possible SPI0 pins.
+
+	if (argCount < 3) return fail(notEnoughArguments);
+	if (!(isInt(args[0]) && isInt(args[1]) && isInt(args[2]))) return fail(needsIntegerError);
+
+	#if defined(ESP8266) || defined(NRF51) || defined(ARDUINO_WEACT) || defined(__ZEPHYR__) || \
+		defined(ARDUINO_ARCH_SAMD) || defined(ARDUINO_SAM_DUE)
+			// Changing SPI pins is not supported.
+			return fail(primitiveNotImplemented);
+	#else
+		int clkPin = mapDigitalPinNum(obj2int(args[0]));
+		int mosiPin = mapDigitalPinNum(obj2int(args[1]));
+		int misoPin = mapDigitalPinNum(obj2int(args[2]));
+
+		setPinMode(clkPin, OUTPUT);
+		setPinMode(mosiPin, OUTPUT);
+		setPinMode(misoPin, INPUT);
+
+		SPI.end(); // stop SPI on current pins
+
+		#if defined(ESP32)
+			SPI.begin(clkPin, misoPin, mosiPin);
+		#elif defined(NRF52)
+			SPI.setPins(misoPin, clkPin, mosiPin);
+			SPI.begin();
+		#elif defined(TARGET_RP2040) || defined(PICO_RP2350)
+			SPI.setSCK(clkPin);
+			SPI.setMOSI(mosiPin);
+			SPI.setMISO(misoPin);
+			SPI.begin();
+		#elif defined(ARDUINO_TEENSY40) || defined(ARDUINO_TEENSY41)
+			SPI.setSCK(clkPin);
+			SPI.setMOSI(mosiPin);
+			SPI.setMISO(misoPin);
+			SPI.begin();
+		#endif
+	#endif
+
 	return falseObj;
 }
 
@@ -1694,6 +1770,164 @@ static int readTemperature() {
 	return (mVx10 - 4000) / 195;
 }
 
+// Support Springbot START
+#elif defined(SPRINGBOT)
+
+// Kionix KX022-1022 accelerometer on external I2C bus.
+// I2C address: 0x1F
+// INT1 connected to IO21 (not used by these primitives; polling is used).
+
+#define KX022_ID		0x1F
+
+// Register map (KX022 family)
+#define KX022_WHO_AM_I	0x0F
+#define KX022_CNTL1		0x18
+#define KX022_CNTL2		0x19
+#define KX022_ODCTRL	0x1B
+
+#define KX022_XOUT_H	0x07
+#define KX022_YOUT_H	0x09
+#define KX022_ZOUT_H	0x0B
+
+#define KX022_INT1_PIN 21
+
+static int kx022Range = 0; // 0..3 => +/-2/4/8/16g
+
+static void kx022Write(int reg, int val) {
+	writeI2CReg(KX022_ID, reg, val);
+}
+
+static int kx022Read(int reg) {
+	return readI2CReg(KX022_ID, reg);
+}
+
+static void startAccelerometer() {
+	// Put INT1 pin into a safe state (optional; primitives poll for data).
+	pinMode(KX022_INT1_PIN, INPUT_PULLUP);
+
+	// Soft reset (CNTL2.SRST = 1). Some variants ignore this; it's safe to try.
+	kx022Write(KX022_CNTL2, 0x80);
+	delay(2);
+
+	// Standby before configuration (CNTL1.PC1 = 0)
+	kx022Write(KX022_CNTL1, 0x00);
+	delay(1);
+
+	// Output data rate. Pick a conservative default.
+	// Many KX022 parts accept 0x02 as ~50 Hz; if unsupported it will be ignored.
+	kx022Write(KX022_ODCTRL, 0x02);
+	delay(1);
+
+	// Enable high resolution (CNTL1.RES = 1), default range +/-2g (GSEL = 0), and enable (PC1 = 1).
+	// CNTL1 bits (typical KX022): PC1(7), RES(6), DRDYE(5), GSEL1:GSEL0(4:3)
+	kx022Range = 0;
+	kx022Write(KX022_CNTL1, 0xC0); // 1100 0000
+	delay(2);
+
+	accelStarted = true;
+}
+
+static int readAcceleration(int registerID) {
+	if (!accelStarted) startAccelerometer();
+
+	int reg = 0;
+	if (1 == registerID) reg = KX022_XOUT_H; // x-axis (high byte)
+	if (3 == registerID) reg = KX022_YOUT_H; // y-axis (high byte)
+	if (5 == registerID) reg = KX022_ZOUT_H; // z-axis (high byte)
+
+	int val = (reg != 0) ? kx022Read(reg) : 0;
+	val = (val >= 128) ? (val - 256) : val; // signed byte
+
+	if (val < -127) val = -127;
+	if (val > 127) val = 127;
+
+	// Scale to MicroBlocks convention: approx. -200..200
+	return (val * 200) / 127;
+}
+
+static void setAccelRange(int range) {
+	// Range is 0, 1, 2, or 3 for +/- 2, 4, 8, or 16 g.
+	if (range < 0) range = 0;
+	if (range > 3) range = 3;
+	kx022Range = range;
+
+	// Put in standby, update GSEL bits, then re-enable.
+	// Keep RES=1.
+	int gselBits = (range & 0x03) << 3; // bits 4:3
+	kx022Write(KX022_CNTL1, 0x40 | gselBits); // RES=1, PC1=0
+	delay(1);
+	kx022Write(KX022_CNTL1, 0xC0 | gselBits); // RES=1, PC1=1
+	delay(2);
+}
+
+static int readTemperature() {
+	// Read temperature (°C) from an Asair AHT20 temperature/humidity sensor on I2C address 0x38.
+	// Returns an integer temperature in °C (rounded to nearest).
+	// This does a single-shot measurement each time it's called.
+
+	const uint8_t AHT20_ID = 0x38;
+	static bool aht20Inited = false;
+
+	auto aht20InitIfNeeded = [&]() -> bool {
+		if (!wireStarted) startWire();
+		if (!wireStarted) return false;
+
+		if (aht20Inited) return true;
+
+		// Initialization command: 0xBE, 0x08, 0x00
+		Wire.beginTransmission(AHT20_ID);
+		Wire.write((uint8_t)0xBE);
+		Wire.write((uint8_t)0x08);
+		Wire.write((uint8_t)0x00);
+		int err = Wire.endTransmission();
+		if (err) return false;
+
+		delay(10);
+		aht20Inited = true;
+		return true;
+	};
+
+	if (!aht20InitIfNeeded()) return 0;
+
+	// Trigger measurement command: 0xAC, 0x33, 0x00
+	Wire.beginTransmission(AHT20_ID);
+	Wire.write((uint8_t)0xAC);
+	Wire.write((uint8_t)0x33);
+	Wire.write((uint8_t)0x00);
+	int err = Wire.endTransmission();
+	if (err) return 0;
+
+	// Wait for measurement to complete.
+	delay(80);
+
+	// Read 6 bytes: status, hum[19:12], hum[11:4], hum[3:0]+temp[19:16], temp[15:8], temp[7:0]
+	uint8_t buf[6] = {0,0,0,0,0,0};
+	Wire.requestFrom((int)AHT20_ID, 6);
+	for (int i = 0; i < 6 && Wire.available(); i++) {
+		buf[i] = Wire.read();
+	}
+
+	// If busy bit (bit7) is still set, allow a short extra wait and retry once.
+	if (buf[0] & 0x80) {
+		delay(20);
+		Wire.requestFrom((int)AHT20_ID, 6);
+		for (int i = 0; i < 6 && Wire.available(); i++) {
+			buf[i] = Wire.read();
+		}
+		if (buf[0] & 0x80) return 0;
+	}
+
+	uint32_t rawTemp = ((uint32_t)(buf[3] & 0x0F) << 16) | ((uint32_t)buf[4] << 8) | (uint32_t)buf[5];
+
+	// Temperature formula (datasheet): T = (raw / 2^20) * 200 - 50
+	float tC = ((float)rawTemp * 200.0f / 1048576.0f) - 50.0f;
+
+	// Round to nearest int.
+	int tInt = (int)((tC >= 0) ? (tC + 0.5f) : (tC - 0.5f));
+	return tInt;
+}
+// Support Springbot END
+
 #elif defined(RP2040_PHILHOWER)
 
 static int readTemperature() { return analogReadTemp(); }
@@ -2137,7 +2371,6 @@ static int readDigitalMicrophone() {
 }
 
 #elif defined(ARDUINO_SAMD_CIRCUITPLAYGROUND_EXPRESS)
-// Note: Disable for now; PlatformIO is no longer able to install the AdaFruit ZeroPDM library.
 
 #define USE_DIGITAL_MICROPHONE 1
 
@@ -2495,6 +2728,15 @@ OBJ primCaptureEnd(int argCount, OBJ *args) {
 	return result;
 }
 
+#if defined(PICO)
+OBJ primSPIPins(int argCount, OBJ *args) {
+		char s[100];
+		sprintf(s,"SPI MOSI %d MISO %d  SCL %d",PIN_SPI_MOSI,PIN_SPI_MISO,PIN_SPI_SCK);
+		outputString(s);
+		return trueObj;
+}
+#endif 
+
 static PrimEntry entries[] = {
 	{"acceleration", primAcceleration},
 	{"temperature", primMBTemp},
@@ -2513,6 +2755,10 @@ static PrimEntry entries[] = {
 	{"internalI2cSet", primInternalI2cSet},
 	{"spiExchange", primSPIExchange},
 	{"spiSetup", primSPISetup},
+	{"spiSetPins", primSPISetPins},
+	#if defined(PICO)
+	{"spiPins", primSPIPins},
+	#endif
 	{"readDHT", primReadDHT},
 	{"microphone", primMicrophone},
 

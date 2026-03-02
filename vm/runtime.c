@@ -204,20 +204,20 @@ void primsInit() {
 	addDataPrims();
 	addDisplayPrims();
 	addFilePrims();
-	//addIOPrims();
+	addIOPrims();
 	addMiscPrims();
 	addNetPrims();
-	//addBLEPrims();
-	//addRadioPrims();
+	addBLEPrims();
+	addRadioPrims();
 	addSensorPrims();
 	addSerialPrims();
-	//addTFTPrims();
+	addTFTPrims();
 	addVarPrims();
-	//addHIDPrims();
+	addHIDPrims();
 	addOneWirePrims();
-	//addCameraPrims();
-	//addEncoderPrims();
-	//addSDCardPrims();
+	addCameraPrims();
+	addEncoderPrims();
+	addSDCardPrims();
 #endif
 }
 
@@ -540,9 +540,6 @@ static void softReset(int clearMemoryFlag) {
 
 	OBJ off = falseObj;
 	if (!useTFT) primSetUserLED(&off);
-	#if defined(OLED_128_64)
-		if (!useTFT) tftInit();
-	#endif
 
 #if defined(ARDUINO_BBC_MICROBIT) || defined(ARDUINO_BBC_MICROBIT_V2) || \
 	defined(ARDUINO_CALLIOPE_MINI) || defined(CALLIOPE_V3)

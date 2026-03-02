@@ -1,0 +1,78 @@
+#include "touch_ft62xx.h"
+
+/* FT62xx registers */
+#define FT_REG_NUM_TOUCHES  0x02
+#define FT_REG_GESTURE_ID   0x01
+#define FT_REG_XH           0x03
+#define FT_REG_XL           0x04
+#define FT_REG_YH           0x05
+#define FT_REG_YL           0x06
+
+void TouchFT62XX::configure(uint8_t addr, uint32_t poll_ms) {
+  _addr = addr;
+  _pollMs = poll_ms;
+  _enabled = false;
+  _lastUpdate = 0;
+  _x = _y = _g = -1;
+}
+
+void TouchFT62XX::begin() {
+  if (_enabled) return;
+  Wire.begin();
+  _enabled = true;
+}
+
+int TouchFT62XX::readReg(uint8_t reg) {
+  Wire.beginTransmission(_addr);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return -1;
+  Wire.requestFrom((int)_addr, 1);
+  return Wire.available() ? Wire.read() : -1;
+}
+
+int TouchFT62XX::touched() {
+  begin();
+  int n = readReg(FT_REG_NUM_TOUCHES);
+  return (n >= 1 && n <= 2) ? n : 0;
+}
+
+void TouchFT62XX::update() {
+  begin();
+  if (!_enabled) return;
+
+  uint32_t now = millis();
+  if ((uint32_t)(now - _lastUpdate) < _pollMs) return;
+
+  if (touched()) {
+    int xh = readReg(FT_REG_XH);
+    int xl = readReg(FT_REG_XL);
+    int yh = readReg(FT_REG_YH);
+    int yl = readReg(FT_REG_YL);
+
+    // Touch released / invalid
+    if ((xh >> 6) == 1) {
+      _x = -1;
+      _y = -1;
+    } else {
+      _x = ((xh & 0x0F) << 8) | xl;
+      _y = ((yh & 0x0F) << 8) | yl;
+    }
+
+    _g = readReg(FT_REG_GESTURE_ID);
+
+  } else {
+    _x = -1;
+    _y = -1;
+    _g = -1;
+  }
+
+  _lastUpdate = now;
+}
+
+int TouchFT62XX::x()       { update(); return _x; }
+int TouchFT62XX::y()       { update(); return _y; }
+int TouchFT62XX::gesture() { update(); return _g; }
+
+int TouchFT62XX::pressure() {
+  return touched() ? 1000 : -1;
+}

@@ -275,6 +275,14 @@ void runTasksUntilDone(void);
 void interpTests1(void);
 void taskTest(void);
 
+// UTF-8 Utilities (from dataPrims.c)
+
+int countUTF8(char *s);
+OBJ charAt(OBJ stringObj, int i);
+int unicodeCodePoint(char *s);
+char *nextUTF8(char *s);
+int UTF8ToCP437(char* src, char* dst, int dstSize);
+
 // Platform Specific Operations
 
 uint64 totalMicrosecs();
@@ -297,6 +305,8 @@ void hardwareInit(void);
 
 int readI2CReg(int deviceID, int reg);
 void writeI2CReg(int deviceID, int reg, int value);
+
+void initSPI();
 
 // I/O Support
 
@@ -342,6 +352,7 @@ OBJ primButtonA(OBJ *args);
 OBJ primButtonB(OBJ *args);
 void primSetUserLED(OBJ *args);
 
+OBJ primI2cExists(int argCount, OBJ *args);
 OBJ primI2cGet(OBJ *args);
 OBJ primI2cSet(OBJ *args);
 OBJ primSPISend(OBJ *args);

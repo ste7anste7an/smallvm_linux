@@ -376,6 +376,63 @@ void updateMicrobitDisplay() {
 	digitalWrite(columnPins[displayCycle], LOW);
 	displayCycle = (displayCycle + 1) % 5;
 }
+#elif defined(SPRINGBOT_GREEN)
+
+static int displaySnapshot = 0;
+static int displayCycle = 0;
+static int rowPins[5] = {8, 17, 10, 38, 6};
+static int columnPins[5] = {3, 2, 14, 15, 16};
+
+#define DISPLAY_BIT(n) (((displaySnapshot >> (n - 1)) & 1) ? LOW : HIGH)
+
+static void turnDisplayOn() {
+	for (int i = 0; i < 5; i++) {
+		setPinMode(columnPins[i], OUTPUT);
+		digitalWrite(columnPins[i], HIGH);
+		setPinMode(rowPins[i], OUTPUT);
+		digitalWrite(rowPins[i], LOW);
+	}
+}
+
+static void turnDisplayOff() {
+	for (int i = 0; i < 5; i++) {
+		digitalWrite(columnPins[i], HIGH); // Was LOW
+	}
+}
+
+void updateMicrobitDisplay() {
+	// Update the display by cycling through the three columns, turning on the rows
+	// for each column. To minimize display artifacts, the display bits are snapshot
+	// at the start of each cycle and the snapshot is not changed during the cycle.
+
+	if (disableLEDDisplay) return;
+
+	if (!microBitDisplayBits && !displaySnapshot) { // display is off
+		return;
+	}
+
+	if (0 == displayCycle) { // starting a new cycle
+		if (displaySnapshot && !microBitDisplayBits) { // display just became off
+			displaySnapshot = 0;
+			turnDisplayOff();
+			return;
+		}
+
+		// take a snapshot of the display bits for the next cycle
+		displaySnapshot = microBitDisplayBits;
+		turnDisplayOn();
+	}
+	int previousColumn = (displayCycle > 0) ? (displayCycle - 1) : 4;
+	digitalWrite(columnPins[previousColumn], HIGH);
+
+	int offset = displayCycle;
+	for (int i = 0; i < 5; i++) {
+		digitalWrite(rowPins[i], !DISPLAY_BIT(offset + (5 * i) + 1));
+	}
+	setPinMode(columnPins[displayCycle], OUTPUT);
+	digitalWrite(columnPins[displayCycle], LOW);
+	displayCycle = (displayCycle + 1) % 5;
+}
 
 #elif defined(DUELink)
 
@@ -414,8 +471,8 @@ static void initDUELedPins() {
 		rowPins[0] = mapDigitalPinNum(22);
 		rowPins[1] = mapDigitalPinNum(23);
 		rowPins[2] = mapDigitalPinNum(24);
-		rowPins[3] = mapDigitalPinNum(25);
-		rowPins[4] = mapDigitalPinNum(26);
+		rowPins[3] = mapDigitalPinNum(27);
+		rowPins[4] = mapDigitalPinNum(28);
 		columnPins[0] = mapDigitalPinNum(4);
 		columnPins[1] = mapDigitalPinNum(7);
 		columnPins[2] = mapDigitalPinNum(3);
@@ -539,7 +596,12 @@ OBJ primMBDisplay(int argCount, OBJ *args) {
 
 OBJ primMBDisplayOff(int argCount, OBJ *args) {
 	microBitDisplayBits = 0;
-	#if !defined(OLED_128_64) || defined(BUILT_IN_DISPLAY)
+	#if !defined(HAS_LED_MATRIX)
+		// If the board does not have a built-in LED matrix but does have a TFT display
+		// then it simulates an LED matrix on the TFT display. In that case, this operation
+		// should clear the simulated the simulates an LED matrix on the TFT screen.
+		// If the boards has a built-in LED matrix AND a TFT display just clear the LED matrix
+		// so that the two displays are independent.
 		if (useTFT) tftClear();
 	#endif
 	return falseObj;
@@ -582,6 +644,8 @@ static OBJ primLightLevel(int argCount, OBJ *args) {
 		lightLevel = (int) (log10((float) analogRead(39)) * 27.684);
 	#elif defined(FOXBIT)
 		lightLevel = analogRead(39) * 1000 / 4095; // output range 0-1000
+	#elif defined(SPRINGBOT_GREEN) || defined(SPRINGBOT_GOLD)
+		lightLevel = analogRead(7) * 1000 / 4095; // output range 0-1000
 	#elif defined(DUELink)
 		int lightPin =
 			(DUE_HAS_EDGE_CONNECTOR) ?
@@ -917,6 +981,8 @@ static void initNeoPixelPin(int pinNum) { // ESP32
 			pinNum = 16; // internal NeoPixel pin on Coding Box 2.0
 		#elif defined(DATABOT)
 			pinNum = 2; // internal NeoPixel pin
+		#elif defined(SPRINGBOT)
+			pinNum = 39; // internal NeoPixel pin
 		#elif defined(ESP32_S3)
 			pinNum = 48; // ESP32-S3-DevKitC-1 internal NeoPixel pin
 		#elif defined(ESP32_C3)
@@ -1183,7 +1249,7 @@ void turnOffInternalNeoPixels() {
 	#elif defined(FOXBIT)
 		count = 35;
 	#elif defined(KIDS_BITS)
-		count = 12;
+		if (isOLED1106) count = 12; // this is a CodingBox
 	#elif defined(M5Atom_Matrix) || defined(ARDUINO_Mbits) || defined(STEAMaker)
 		count = 25;
 		// sending neopixel data twice on the Atom Matrix eliminates green pixel at startup

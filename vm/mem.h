@@ -65,8 +65,9 @@ extern "C" {
 #endif
 
 #if defined(ARDUINO_BBC_MICROBIT) || defined(ARDUINO_CALLIOPE_MINI) || defined(CALLIOPE_V3) || \
-	defined(ARDUINO_BBC_MICROBIT_V2) || defined(M5Atom_Matrix) || \
-	defined(GNUBLOCKS) || defined(ARDUINO_Mbits) || defined(STEAMaker) || defined(FOXBIT)
+	defined(ARDUINO_BBC_MICROBIT_V2) || defined(M5Atom_Matrix) || defined(DUELink) || \
+	defined(GNUBLOCKS) || defined(ARDUINO_Mbits) || defined(STEAMaker) || defined(FOXBIT) || \
+	defined(SPRINGBOT_GREEN)
 		#define HAS_LED_MATRIX 1
 #endif
 

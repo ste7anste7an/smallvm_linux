@@ -1,0 +1,29 @@
+#pragma once
+#include <Arduino.h>
+#include <Wire.h>
+
+class TouchFT62XX {
+public:
+  void configure(uint8_t addr = 0x38, uint32_t poll_ms = 16);
+  void begin();
+
+  int touched();
+  int x();
+  int y();
+  int gesture();
+  int pressure();
+
+private:
+  void update();
+  int  readReg(uint8_t reg);
+
+  uint8_t  _addr;
+  uint32_t _pollMs;
+  uint32_t _lastUpdate = 0;
+
+  bool _enabled = false;
+
+  int _x = -1;
+  int _y = -1;
+  int _g = -1;
+};

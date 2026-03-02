@@ -9,6 +9,7 @@
 // Revised by John Maloney, November 2018
 // Revised by Bernat Romagosa & John Maloney, March 2020
 // MQTT primitives added by Wenjie Wu with help from Tom Ming
+// HTTPS support added by Josep Ferràndiz, January 2026
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,7 +35,6 @@
 #elif defined(ARDUINO_ARCH_ESP32)
 	#include <WiFi.h>
 	#include <ESPmDNS.h>
-//	#include <WiFiClientSecure.h>
 	#include <WebSocketsServer.h>
 	#include <esp_now.h>
 	#include <esp_wifi.h> // only for esp_wifi_set_channel()
@@ -489,36 +489,47 @@ static OBJ primRespondToHttpRequest(int argCount, OBJ *args) {
 	return falseObj;
 }
 
-// HTTP Client
+// HTTP/HTTPS client support (client side only; HTTP server unchanged)
+//
+// HTTPS is supported without certificates by using WiFiClientSecure::setInsecure(),
+// which avoids storing CA certs but does NOT validate the server certificate.
+// WARNING: setInsecure() disables certificate validation (MITM risk).
 
-// Attempt to enable HTTPS, but it crashes VM so reverted to generic HTTP (WiFiClient):
-// WiFiClientSecure httpClient;
+static WiFiClient httpClient;
+static Client *activeHttpClient = &httpClient;
 
-WiFiClient httpClient;
+#if defined(ARDUINO_ARCH_ESP32) || defined(ESP8266)
+	static WiFiClientSecure httpsClient;
+	#define HAS_HTTPS_CLIENT 1
+#else
+	#define HAS_HTTPS_CLIENT 0
+#endif
 
 static OBJ primHttpConnect(int argCount, OBJ *args) {
-	// Connect to an HTTP server and port.
+	// Connect to an HTTP server. The port number is optional.
 
 	if (NO_WIFI()) return fail(noWiFi);
+	if (argCount < 1) return fail(notEnoughArguments);
+	if (!IS_TYPE(args[0], StringType)) return fail(needsStringError);
 
-	char* host = obj2str(args[0]);
-	int port = ((argCount > 1) && isInt(args[1])) ? obj2int(args[1]) : 80;
+	const char* host = obj2str(args[0]);
+	uint16_t port = 80;
+	if (argCount > 1) {
+		if (isInt(args[1])) port = obj2int(args[1]);
+		if (IS_TYPE(args[1], StringType)) port = atoi(obj2str(args[1]));
+	}
+
+	if (activeHttpClient->connected()) activeHttpClient->stop(); // in case previous connection is still active
+
 	uint32 start = millisecs();
 	const int timeout = 3000;
 	int ok;
 
-	#ifdef ARDUINO_ARCH_ESP32
-		// Following was part of failed attempt to use WiFiClientSecure:
-		// httpClient.setInsecure();
-		ok = httpClient.connect(host, port, timeout);
-	#else
-		httpClient.setTimeout(timeout);
-		ok = httpClient.connect(host, port);
-	#endif
+	httpClient.setTimeout(timeout);
+	ok = httpClient.connect(host, port);
 
-	#if defined(ESP8266) // || defined(ARDUINO_ARCH_ESP32)
-		// xxx fais on ESP32 due to an error in their code
-		client.setNoDelay(true);
+	#if defined(ESP8266)
+		httpClient.setNoDelay(true); // does not work on ESP32
 	#endif
 
 	while (ok && !httpClient.connected()) { // wait for connection to be fully established
@@ -528,6 +539,58 @@ static OBJ primHttpConnect(int argCount, OBJ *args) {
 		if (elapsed > timeout) break;
 		delay(1);
 	}
+
+	if (ok && httpClient.connected()) {
+		activeHttpClient = &httpClient;
+	} else {
+		httpClient.stop();
+	}
+	processMessage(); // process messages now
+	return falseObj;
+}
+
+static OBJ primHttpSecureConnect(int argCount, OBJ *args) {
+	// Connect to an HTTPS server. The port number is optional.
+
+	if (NO_WIFI()) return fail(noWiFi);
+	if (!HAS_HTTPS_CLIENT) return fail(primitiveNotImplemented);
+	if (argCount < 1) return fail(notEnoughArguments);
+	if (!IS_TYPE(args[0], StringType)) return fail(needsStringError);
+
+	const char* host = obj2str(args[0]);
+	uint16_t port = 443;
+	if (argCount > 1) {
+		if (isInt(args[1])) port = obj2int(args[1]);
+		if (IS_TYPE(args[1], StringType)) port = atoi(obj2str(args[1]));
+	}
+
+	if (activeHttpClient->connected()) activeHttpClient->stop(); // in case previous connection is still active
+
+	#if HAS_HTTPS_CLIENT
+		httpsClient.setInsecure();
+		activeHttpClient = &httpsClient;
+	#endif
+
+	uint32 start = millisecs();
+	const int timeout = 5000; // increased from 3 to 5 secs to try to reduce failed connections
+	int ok;
+
+	activeHttpClient->setTimeout(timeout);
+	ok = activeHttpClient->connect(host, port);
+
+	while (ok && !activeHttpClient->connected()) {
+		processMessage(); // process messages now
+		uint32 now = millisecs();
+		uint32 elapsed = (now >= start) ? (now - start) : now;
+		if (elapsed > timeout) break;
+		delay(1);
+	}
+
+	if (!(ok && activeHttpClient->connected())) {
+		activeHttpClient->stop();
+		activeHttpClient = &httpClient;
+	}
+
 	processMessage(); // process messages now
 	return falseObj;
 }
@@ -538,39 +601,60 @@ static OBJ primHttpIsConnected(int argCount, OBJ *args) {
 
 	if (NO_WIFI()) return fail(noWiFi);
 
-	return (httpClient.connected() || httpClient.available()) ? trueObj : falseObj;
+	return (activeHttpClient->connected() || activeHttpClient->available()) ? trueObj : falseObj;
 }
 
 static OBJ primHttpRequest(int argCount, OBJ *args) {
-	// Send an HTTP request. Must have first connected to the server.
-
 	if (NO_WIFI()) return fail(noWiFi);
+	if (!activeHttpClient->connected()) return falseObj;
 
-	char* reqType = obj2str(args[0]);
-	char* host = obj2str(args[1]);
-	char* path = obj2str(args[2]);
-	char request[256];
-	sprintf(request,
-			"%s /%s HTTP/1.0\r\n\
-Host: %s\r\n\
-Connection: close\r\n\
-User-Agent: MicroBlocks\r\n\
-Accept: */*\r\n",
-			reqType,
-			path,
-			host);
-	if ((argCount > 3) && IS_TYPE(args[3], StringType)) {
-		httpClient.write((const uint8_t *) request, strlen(request));
-		char length_str[50];
-		char* body = obj2str(args[3]);
-		int content_length = strlen(body);
-		httpClient.write((const uint8_t *) "Content-Type: text/plain\r\n", 26);
-		sprintf(length_str, "Content-Length: %i\r\n\r\n", content_length);
-		httpClient.write((const uint8_t *) length_str, strlen(length_str));
-		httpClient.write((const uint8_t *) body, content_length);
+	const char *reqType = obj2str(args[0]);
+	const char *host	= obj2str(args[1]);
+	const char *path	= obj2str(args[2]);
+	const char *body = ((argCount > 3) && IS_TYPE(args[3], StringType)) ? obj2str(args[3]) : "";
+
+	activeHttpClient->write((const uint8_t *) reqType, strlen(reqType));
+	activeHttpClient->write((const uint8_t *) " ", 1);
+
+	if (!path || !path[0]) {
+		activeHttpClient->write((const uint8_t *) "/", 1);
 	} else {
-		strcat(request, "\r\n");
-		httpClient.write((const uint8_t *) request, strlen(request));
+		if (path[0] != '/') activeHttpClient->write((const uint8_t *) "/", 1);
+		activeHttpClient->write((const uint8_t *) path, strlen(path));
+	}
+
+	// Protocol
+	activeHttpClient->write((const uint8_t *) " HTTP/1.0\r\n", 11);
+
+	// Host
+	activeHttpClient->write((const uint8_t *) "Host: ", 6);
+	activeHttpClient->write((const uint8_t *) host, strlen(host));
+	activeHttpClient->write((const uint8_t *) "\r\n", 2);
+
+	// Other Headers
+	const char *headers =
+	"Connection: close\r\n"
+	"User-Agent: MicroBlocks\r\n"
+	"Accept: */*\r\n";
+	activeHttpClient->write((const uint8_t *) headers, strlen(headers));
+
+	// Body
+	int body_length = strlen(body);
+	if ((body_length > 0) && (strcmp(reqType, "GET") != 0)) {
+		// NOTE: HTTPS fails if the GET request includes a body.
+		// NOTE: WiFiClientSecure.write() fails with a zero-length string/data.
+
+		// Content-Type
+		activeHttpClient->write((const uint8_t *) "Content-Type: text/plain\r\n", 26);
+
+		// Content-Length
+		char lenStr[50];
+		snprintf(lenStr, sizeof(lenStr), "Content-Length: %d\r\n\r\n", body_length);
+		activeHttpClient->write((const uint8_t *) lenStr, strlen(lenStr));
+		activeHttpClient->write((const uint8_t *) body, body_length);
+	} else {
+		// Close headers if no body
+		activeHttpClient->write((const uint8_t *) "\r\n", 2);
 	}
 	return falseObj;
 }
@@ -581,12 +665,28 @@ static OBJ primHttpResponse(int argCount, OBJ *args) {
 	if (NO_WIFI()) return fail(noWiFi);
 
 	uint8_t buf[800];
-	int byteCount = httpClient.read(buf, 800);
+
+	int avail = activeHttpClient->available();
+	if (!avail) {
+		if (!activeHttpClient->connected()) {
+			activeHttpClient->stop();
+			activeHttpClient = &httpClient;
+		}
+		return (OBJ) &noDataString;
+	}
+	if (avail > 800) avail = 800;
+
+	int byteCount = activeHttpClient->readBytes(buf, avail);
 	if (!byteCount) return (OBJ) &noDataString;
 
 	OBJ result = newString(byteCount);
 	if (falseObj == result) return (OBJ) &noDataString; // out of memory
 	memcpy((uint8_t *) obj2str(result), buf, byteCount);
+
+	if (!activeHttpClient->connected() && (activeHttpClient->available() == 0)) {
+		activeHttpClient->stop();
+		activeHttpClient = &httpClient;
+	}
 	return result;
 }
 
@@ -854,6 +954,7 @@ static OBJ primSetDomainName(int argCount, OBJ *args) { return fail(noWiFi); }
 static OBJ primHttpServerGetRequest(int argCount, OBJ *args) { return fail(noWiFi); }
 static OBJ primRespondToHttpRequest(int argCount, OBJ *args) { return fail(noWiFi); }
 static OBJ primHttpConnect(int argCount, OBJ *args) { return fail(noWiFi); }
+static OBJ primHttpSecureConnect(int argCount, OBJ *args) { return fail(noWiFi); }
 static OBJ primHttpIsConnected(int argCount, OBJ *args) { return fail(noWiFi); }
 static OBJ primHttpRequest(int argCount, OBJ *args) { return fail(noWiFi); }
 static OBJ primHttpResponse(int argCount, OBJ *args) { return fail(noWiFi); }
@@ -1318,6 +1419,7 @@ static PrimEntry entries[] = {
 	{"httpServerGetRequest", primHttpServerGetRequest},
 	{"respondToHttpRequest", primRespondToHttpRequest},
 	{"httpConnect", primHttpConnect},
+	{"httpSecureConnect", primHttpSecureConnect},
 	{"httpIsConnected", primHttpIsConnected},
 	{"httpRequest", primHttpRequest},
 	{"httpResponse", primHttpResponse},

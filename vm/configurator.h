@@ -47,7 +47,7 @@ struct Config {
         Pin  dc;
         Pin  rst;
         int  rotation;
-        int  color;
+        bool colorBGR;
         bool invert;
         Pin  backlight;
         int  width;

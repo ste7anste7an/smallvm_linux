@@ -49,8 +49,10 @@
 	#define OBJSTORE_BYTES 11000
 #elif defined(HAS_CAMERA)
 	#define OBJSTORE_BYTES 230000 // will be allocated from PSRAM
-#elif defined(ESP32_S3) || defined(ESP32_C3)
-	#define OBJSTORE_BYTES 77000
+#elif defined(ESP32_S2) || defined(ESP32_C3)
+	#define OBJSTORE_BYTES 32000 // https test: 80000 fails 50000 fails on https 35000 works
+#elif defined(ESP32_S3)
+	#define OBJSTORE_BYTES 64000
 #elif defined(ARDUINO_ARCH_ESP32)
 	// object store is allocated from heap on ESP32
 	#if defined(USE_NIMBLE)
@@ -63,7 +65,7 @@
 #elif defined(ARDUINO_ARCH_RP2040)
 	#define OBJSTORE_BYTES 57000
 #elif defined(ARDUINO_SAM_DUE)
-	#define OBJSTORE_BYTES 75000
+	#define OBJSTORE_BYTES 72000
 #elif defined(CONFIG_BOARD_BEAGLECONNECT_FREEDOM)
 	#define OBJSTORE_BYTES 37000
 #elif defined(DUELink)
@@ -108,7 +110,7 @@ void memInit() {
 	}
 
 	#if defined(ARDUINO_ARCH_ESP32)
-		objstore = (OBJ *) malloc(4 * OBJSTORE_WORDS);
+		objstore = (OBJ *) heap_caps_malloc(4 * OBJSTORE_WORDS, MALLOC_CAP_INTERNAL);
 		if (!objstore) vmPanic("ESP32 could not allocate objectstore");
 	#endif
 
