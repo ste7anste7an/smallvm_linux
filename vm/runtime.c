@@ -207,17 +207,17 @@ void primsInit() {
 	addIOPrims();
 	addMiscPrims();
 	addNetPrims();
-	addBLEPrims();
-	addRadioPrims();
+	//addBLEPrims();
+	//addRadioPrims();
 	addSensorPrims();
 	addSerialPrims();
 	addTFTPrims();
 	addVarPrims();
 	addHIDPrims();
 	addOneWirePrims();
-	addCameraPrims();
-	addEncoderPrims();
-	addSDCardPrims();
+	//addCameraPrims();
+	//addEncoderPrims();
+	//addSDCardPrims();
 #endif
 }
 
