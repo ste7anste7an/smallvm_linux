@@ -1,0 +1,121 @@
+// touch_cst820.cpp
+#include "touch_cst820.h"
+#include <Wire.h>
+
+TwoWire I2C_1(1);
+
+TwoWire* TouchCST820::wire() {
+  switch (_i2cIf) {
+    case 1:  return &I2C_1;
+    case 0:
+    default: return &Wire;
+  }
+}
+
+
+void TouchCST820::configure(int i2c_interface, int sda, int scl, uint32_t clock_hz) {
+  _i2cIf = i2c_interface;
+  _sda = sda;
+  _scl = scl;
+  _clk = clock_hz;
+
+  _wireStarted = false;
+  _enabled = false;
+  _lastUpdate = 0;
+  _x = _y = _g = -1;
+}
+
+void TouchCST820::startWire() {
+  if (_wireStarted) return;
+  TwoWire *TW = &I2C_1;
+  TW->end();
+  TW->setPins(_sda, _scl);
+  TW->begin();
+  TW->setClock(_clk);
+  _wireStarted = true;
+}
+
+int TouchCST820::readReg(uint8_t reg) {
+  startWire();
+  if (!_wireStarted) return -1;
+
+  TwoWire *TW = wire();
+  TW->beginTransmission(_addr);
+  TW->write(reg);
+  if (TW->endTransmission(false) != 0) return -1;
+
+  TW->requestFrom((int)_addr, 1);
+  return TW->available() ? TW->read() : -1;
+}
+
+void TouchCST820::writeReg(uint8_t reg, uint8_t val) {
+  startWire();
+  if (!_wireStarted) return;
+
+  TwoWire *TW = wire();
+  TW->beginTransmission(_addr);
+  TW->write(reg);
+  TW->write(val);
+  TW->endTransmission(true);
+}
+
+void TouchCST820::begin() {
+  if (_enabled) return;
+  startWire();
+  if (!_wireStarted) return;
+
+  writeReg(0xFE, 0xFF); // do not sleep
+  _enabled = true;
+}
+
+int TouchCST820::touched() {
+  begin();
+  int points = readReg(0x02);
+  return (points >= 1 && points <= 5) ? points : 0;
+}
+
+void TouchCST820::update() {
+  begin();
+  if (!_enabled) return;
+
+  uint32_t now = millis();
+  if ((uint32_t)(now - _lastUpdate) < _pollMs) return;
+
+  if (touched()) {
+    uint8_t d[6];
+    TwoWire *TW = wire();
+
+    TW->beginTransmission(_addr);
+    TW->write((uint8_t)0x01);
+    TW->endTransmission(false);
+
+    TW->requestFrom((int)_addr, (int)sizeof(d));
+    for (uint8_t i = 0; i < sizeof(d); i++)
+      d[i] = TW->available() ? TW->read() : 0;
+
+    _g = d[0];
+
+    // Your original mapping:
+    // Y = TFT_WIDTH - ((((d[2]&0xF)<<8)|d[3]));
+    // X = (((d[4]&0xF)<<8)|d[5]);
+    int rawY = (int)((((d[2] & 0x0F) << 8) | d[3]));
+    int rawX = (int)((((d[4] & 0x0F) << 8) | d[5]));
+
+    _y = rawY;   // flip vs width (keeps your behavior)
+    _x = rawX;
+
+  } else {
+    _x = -1;
+    _y = -1;
+  }
+
+  _lastUpdate = now;
+}
+
+int TouchCST820::x()        { update(); return _x; }
+int TouchCST820::y()        { update(); return _y; }
+int TouchCST820::gesture()  { update(); return _g; }
+
+int TouchCST820::pressure() {
+  return touched() ? 1000 : -1;
+}
