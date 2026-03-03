@@ -17,7 +17,7 @@
 gcc -std=c99 -Wall -Wno-unused-variable -Wno-unused-result -O3 \
 	-D GNUBLOCKS \
 	-I ../vm \
-	linux.c ../vm/*.c \
+	linux.c libvm.a \
         arduino_gfx.c \
 	linuxFilePrims.c linuxNetPrims.c \
 	linuxOutputPrims.c linuxSensorPrims.c  \

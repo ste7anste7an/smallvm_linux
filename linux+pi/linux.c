@@ -232,7 +232,7 @@ void stopServos() {}
 // MB
 //void tftSetHugePixel(int x, int y, int value) {};
 //void tftSetHugePixelBits(int bits) {};
-int ideConnected() {return 1;};
+//int ideConnected() {return 1;};
 
 //void stopTone() {};
 //void primSetUserLED(OBJ *args) {};

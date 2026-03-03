@@ -3,595 +3,303 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 // Copyright 2020 John Maloney, Bernat Romagosa, and Jens Mönig
-
-// linuxTftPrims.cpp - Microblocks TFT screen primitives simulated on an SDL window
-// Bernat Romagosa, February 2021
+// linuxTftPrims.cpp - Microblocks TFT screen primitives using ArduinoGFX framebuffer backend
+// Rewrite: replace SDL2 window/renderer with ArduinoGFX (/dev/mem framebuffer mapping)
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
-
-//#include <SDL2/SDL.h>
+#include <string.h>
 
 #include "mem.h"
 #include "interp.h"
 
-#define DEFAULT_WIDTH 320
-#define DEFAULT_HEIGHT 240
-#define REFRESH_MSECS 16 // screen refresh interval (~60 frames/sec)
+#define DEFAULT_WIDTH  640
+#define DEFAULT_HEIGHT 480
 
+// If your physical framebuffer differs, set these at build time, e.g.:
+//   -DTFT_WIDTH=800 -DTFT_HEIGHT=480 -DTFT_STRIDE=2400 -DTFT_PHYS_BASE=0x....
+// STRIDE is bytes per line in the mapped framebuffer (BGR888 in your ArduinoGFX code => width*3 usually).
+#ifndef TFT_WIDTH
+#  define TFT_WIDTH DEFAULT_WIDTH
+#endif
+#ifndef TFT_HEIGHT
+#  define TFT_HEIGHT DEFAULT_HEIGHT
+#endif
+#ifndef TFT_STRIDE
+#  define TFT_STRIDE (TFT_WIDTH * 3)
+#endif
+#ifndef TFT_PHYS_BASE
+#  define TFT_PHYS_BASE 0x15a00000ULL
+#endif
+
+// --- ArduinoGFX backend ---
+#define _GNU_SOURCE
+#include "arduino_gfx.h"
+
+// --- Input simulation ---
+// This backend writes to a framebuffer; it does not provide mouse/keyboard input.
+// We keep the API but return "not touched" and leave KEY_SCANCODE cleared.
 static int mouseDown = false;
 static int mouseX = -1;
 static int mouseY = -1;
 static int mouseDownTime = 0;
 
 static int tftEnabled = false;
-//static SDL_Window *window;
-//static SDL_Renderer* renderer;
-static int lastRefreshTime = 0;
+static ArduinoGFX *tft = NULL;
 
 extern int KEY_SCANCODE[];
 
-// Helper Functions
+// --- Helpers ---
 
-static void setRenderColor(int color24b) {
-/*	SDL_SetRenderDrawColor(
-		renderer, (color24b >> 16) & 255, (color24b >> 8) & 255, color24b & 255, 255);
-		*/
+static inline uint16_t color24_to_rgb565(int color24b) {
+	uint8_t r = (color24b >> 16) & 255;
+	uint8_t g = (color24b >>  8) & 255;
+	uint8_t b = (color24b >>  0) & 255;
+	return ArduinoGFX_rgb565(r, g, b);
+}
+
+static void initKeys() {
+	// Keep behavior compatible with the old file.
+	for (int i = 0; i < 255; i++) KEY_SCANCODE[i] = 0;
+}
+
+static void processEvents() {
+	// No SDL event loop here. If you later add a touch/keyboard backend,
+	// update mouseDown/mouseX/mouseY/mouseDownTime and KEY_SCANCODE[] here.
+	(void)mouseDownTime;
+	mouseDown = false;
+	mouseX = -1;
+	mouseY = -1;
+}
+
+// --- Public-ish API used elsewhere in MicroBlocks ---
+
+void tftInit() {
+	if (tftEnabled) return;
+
+	tft = ArduinoGFX_create(TFT_WIDTH, TFT_HEIGHT, TFT_STRIDE, (uint64_t)TFT_PHYS_BASE);
+	if (!tft) {
+		printf("ArduinoGFX_create failed\n");
+		return;
+	}
+	if (!tft->begin(tft)) {
+		printf("ArduinoGFX begin() failed (check /dev/mem perms and phys addr)\n");
+		ArduinoGFX_destroy(tft);
+		tft = NULL;
+		return;
+	}
+
+	// Clear screen on init
+	tft->fillScreen(tft, ArduinoGFX_rgb565(0, 0, 0));
+	tft->flush(tft);
+
+	initKeys();
+	tftEnabled = true;
 }
 
 void tftClear() {
 	tftInit();
-	setRenderColor(0);
-	//SDL_RenderClear(renderer);
-}
-
-// Text Rendering with PangoCairo
-
-#ifdef USE_PANGO
-
-#include <pango/pangocairo.h>
-
-int onePixel;
-PangoFontDescription *pangoFont = NULL;
-cairo_surface_t *textMeasureSurface = NULL;
-
-static void setFont(char *fontName, int fontSize, int isBold, int isItalic) {
-	if (!pangoFont) pangoFont = pango_font_description_new();
-	pango_font_description_set_family(pangoFont, fontName);
-	int fudgeFactor = (pango_version() > 14403) ? 1 : 0;
-	pango_font_description_set_size(pangoFont, (fontSize - fudgeFactor) * PANGO_SCALE);
-	if (isBold) pango_font_description_set_weight(pangoFont, 700);
-	if (isItalic) pango_font_description_set_style(pangoFont, PANGO_STYLE_ITALIC);
-}
-
-static void measureText(char *s, int *width, int *height) {
-	if (!textMeasureSurface) {
-		cairo_surface_t *cairoSurface = cairo_image_surface_create_for_data(
-			(void *) &onePixel, CAIRO_FORMAT_ARGB32, 1, 1, 4);
-	}
-	cairo_t *cr = cairo_create(textMeasureSurface);
-	PangoLayout *layout = pango_cairo_create_layout(cr);
-	pango_layout_set_font_description(layout, pangoFont);
-	pango_layout_set_text(layout, s, strlen(s));
-	pango_layout_get_pixel_size(layout, width, height); // get rendered text size
-
-	// cleanup layout and context
-	g_object_unref(layout);
-	cairo_destroy(cr);
-}
-
-static void drawText(char *s, int x, int y, int color24b, int scale, int wrapFlag) {
-	// Draw the given string with the given position, color, scale and wrapFlag
-	// TODO wrap is ignored for now
-
-	SDL_Color color = { color24b >> 16, (color24b >> 8) & 255, color24b & 255 };
-	int textW, textH;
-	int fontSize = 6 * scale;
-	setFont("Arial", fontSize, true, false);
-	measureText(s, &textW, &textH);
-
-	// Create surface for text rendering (could be cached if slow)
-	SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormat(0, textW, textH, 32, SDL_PIXELFORMAT_ARGB8888);
-
-	// PangoCairo setup
-	cairo_surface_t *cairoSurface = cairo_image_surface_create_for_data(
-		surface->pixels, CAIRO_FORMAT_ARGB32, surface->w, surface->h, (4 * surface->w));
-	cairo_t *cr = cairo_create(cairoSurface);
-	PangoLayout *layout = pango_cairo_create_layout(cr);
-	pango_layout_set_font_description(layout, pangoFont);
-	pango_layout_set_text(layout, s, strlen(s));
-
-	// Render the text onto surface
-	cairo_set_source_rgba(cr,
-		((color24b >> 16) & 255) / 255.0,
-		((color24b >> 8) & 255) / 255.0,
-		(color24b & 255) / 255.0,
-		1.0);
-	pango_cairo_show_layout(cr, layout);
-
-	// PangoCairo clean up
-	g_object_unref(layout);
-	cairo_destroy(cr);
-	cairo_surface_destroy(cairoSurface);
-
-	// Copy rendered text to the display
-	SDL_Rect rect = {x, y, surface->w, surface->h};
-	SDL_Texture* tempTexture = SDL_CreateTextureFromSurface(renderer, surface);
-	SDL_RenderCopy(renderer, tempTexture, NULL, &rect);
-	SDL_DestroyTexture(tempTexture);
-	SDL_FreeSurface(surface);
-}
-
-#else
-
-//#include <SDL2/SDL_ttf.h>
-
-static int ttfInitialized = false;
-
-//#include "linuxFont.h"
-/*
-static TTF_Font* openTTFFont(int pointSize) {
-	TTF_Font *result = TTF_OpenFontRW(
-		SDL_RWFromConstMem(LiberationMono_Regular_ttf, LiberationMono_Regular_ttf_len),
-		true,
-		pointSize);
-	if (!result) printf("Font open error: %s\n", TTF_GetError());
-	return result;
-}
-*/
-static void drawText(char *s, int x, int y, int color24b, int scale, int wrapFlag) {
-	// Draw the given string with the given position, color, scale and wrapFlag
-	// TODO wrap is ignored for now
-
-	if (!ttfInitialized) { // initialize TTF before first use
-		// int err = TTF_Init();
-		// if (err) {
-		// 	printf("TTF_Init error: %s\n", TTF_GetError());
-		// 	return;
-		// }
-		ttfInitialized = true;
-	}
-
-	/* 
-	SDL_Color color = { color24b >> 16, (color24b >> 8) & 255, color24b & 255 };
-
-	TTF_Font* font = openTTFFont(10 * scale);
-	if (!font) return;
-
-	SDL_Surface* surface = TTF_RenderUTF8_Solid(font, s, color);
-
-	int width, height;
-	TTF_SizeText(font, s, &width, &height);
-	SDL_Rect rect = { x, y, width, height };
-
-	SDL_Texture* message = SDL_CreateTextureFromSurface(renderer, surface);
-	SDL_RenderCopy(renderer, message, NULL, &rect);
-
-	SDL_FreeSurface(surface);
-	SDL_DestroyTexture(message);
-	TTF_CloseFont(font);
-	*/
-}
-
-#endif
-
-// Events and SDL Window Support
-
-static void initKeys() {
-	for (int i = 0; i < 255; i++) {
-		KEY_SCANCODE[i] = false;
-	}
-}
-
-static void processEvents() {
-	/*
-	SDL_Event e;
-	while (SDL_PollEvent(&e) > 0) {
-		switch(e.type) {
-			case SDL_QUIT:
-				SDL_DestroyWindow(window);
-				SDL_Quit();
-				tftEnabled = false;
-				exit(0); // quit from GnuBlocks
-				break;
-			case SDL_MOUSEBUTTONDOWN:
-				mouseDownTime = millisecs();
-				mouseDown = true;
-				break;
-			case SDL_MOUSEBUTTONUP:
-				mouseDown = false;
-				mouseX = -1;
-				mouseY = -1;
-				break;
-			case SDL_KEYDOWN:
-				// Using keysyms detects keys by their name, not position,
-				// but gives huge values for keys that aren't characters, like
-				// the arrow keys, numpad keys or modifiers. Scancodes will be
-				// different for different keyboard layouts.
-				KEY_SCANCODE[e.key.keysym.scancode] = 1;
-				break;
-			case SDL_KEYUP:
-				KEY_SCANCODE[e.key.keysym.scancode] = 0;
-				break;
-			default:
-				break;
-		}
-	}
-		*/
-}
-
-void tftInit() {
-	if (!tftEnabled) {
-		lastRefreshTime = millisecs();
-//		SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
-// if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) {
-// 	// Unrecoverable error, exit here.
-// 	printf("SDL_Init failed: %s\n", SDL_GetError());
-// 	return;
-// }
-// 		window = SDL_CreateWindow("MicroBlocks for Linux",
-// 				SDL_WINDOWPOS_UNDEFINED,
-// 				SDL_WINDOWPOS_UNDEFINED,
-// 				DEFAULT_WIDTH,
-// 				DEFAULT_HEIGHT,
-// 				SDL_WINDOW_RESIZABLE);
-
-// 		renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
-// 		SDL_RenderClear(renderer);
-// 		initKeys();
-// 		tftEnabled = true;
-	}
+	if (!tftEnabled || !tft) return;
+	tft->fillScreen(tft, ArduinoGFX_rgb565(0, 0, 0));
+	tft->flush(tft);
 }
 
 void updateMicrobitDisplay() {
+	// Old SDL version: processEvents() + present at ~60fps.
+	// Here: processEvents() + flush each call (MicroBlocks typically calls this often).
 	processEvents();
-	if (tftEnabled) {
-		uint32_t now = millisecs();
-		if (now < lastRefreshTime) lastRefreshTime = 0; // clock wrap
-		if ((now - lastRefreshTime > REFRESH_MSECS)) {
-	//		SDL_RenderPresent(renderer);
-			lastRefreshTime = now;
-		}
+	if (tftEnabled && tft) {
+		tft->flush(tft);
 	}
 }
 
-// TFT Primitives
+// --- TFT Primitives (MicroBlocks "tft" primitive set) ---
 
 static OBJ primEnableDisplay(int argCount, OBJ *args) {
+	(void)argCount;
 	if (trueObj == args[0]) {
 		tftInit();
 	} else {
-		// if (window) {
-		// 	// SDL_DestroyWindow(window);
-		// 	// SDL_Quit();
-		// 	tftEnabled = false;
-		// }
+		if (tft) {
+			tft->end(tft);
+			ArduinoGFX_destroy(tft);
+			tft = NULL;
+		}
+		tftEnabled = false;
 	}
 	return falseObj;
 }
 
 static OBJ primGetWidth(int argCount, OBJ *args) {
-//	if (!window) return zeroObj;
-	int w, h;
-	//SDL_GetWindowSize(window, &w, &h);
-	return int2obj(w);
+	(void)argCount; (void)args;
+	if (!tftEnabled || !tft) return zeroObj;
+	return int2obj(tft->width);
 }
 
 static OBJ primGetHeight(int argCount, OBJ *args) {
-	//if (!window) return zeroObj;
-	int w, h;
-	//SDL_GetWindowSize(window, &w, &h);
-	return int2obj(h);
+	(void)argCount; (void)args;
+	if (!tftEnabled || !tft) return zeroObj;
+	return int2obj(tft->height);
 }
 
 static OBJ primSetPixel(int argCount, OBJ *args) {
+	(void)argCount;
 	tftInit();
+	if (!tftEnabled || !tft) return falseObj;
+
 	int x = obj2int(args[0]);
 	int y = obj2int(args[1]);
-	// setRenderColor(obj2int(args[2]));
-	// SDL_RenderDrawPoint(renderer, x, y);
+	uint16_t c = color24_to_rgb565(obj2int(args[2]));
+	tft->drawPixel(tft, x, y, c);
 	return falseObj;
 }
 
 static OBJ primLine(int argCount, OBJ *args) {
+	(void)argCount;
 	tftInit();
+	if (!tftEnabled || !tft) return falseObj;
+
 	int x0 = obj2int(args[0]);
 	int y0 = obj2int(args[1]);
 	int x1 = obj2int(args[2]);
 	int y1 = obj2int(args[3]);
-	// setRenderColor(obj2int(args[4]));
-	// SDL_RenderDrawLine(renderer, x0, y0, x1, y1);
+	uint16_t c = color24_to_rgb565(obj2int(args[4]));
+	tft->drawLine(tft, x0, y0, x1, y1, c);
 	return falseObj;
-}
-
-static void drawRect(int x, int y, int width, int height, int fill) {
-//	SDL_Rect rect = { x, y, width, height };
-	// if (fill) {
-	// 	SDL_RenderFillRect(renderer, &rect);
-	// } else {
-	// 	SDL_RenderDrawRect(renderer, &rect);
-	// }
 }
 
 static OBJ primRect(int argCount, OBJ *args) {
 	tftInit();
+	if (!tftEnabled || !tft) return falseObj;
+
 	int x = obj2int(args[0]);
 	int y = obj2int(args[1]);
-	int width = obj2int(args[2]);
-	int height = obj2int(args[3]);
+	int w = obj2int(args[2]);
+	int h = obj2int(args[3]);
+	uint16_t c = color24_to_rgb565(obj2int(args[4]));
 	int fill = (argCount > 5) ? (trueObj == args[5]) : true;
-	setRenderColor(obj2int(args[4]));
-	drawRect(x, y, width, height, fill);
+
+	if (fill) tft->fillRect(tft, x, y, w, h, c);
+	else      tft->drawRect(tft, x, y, w, h, c);
+
 	return falseObj;
-}
-
-static void drawOctaves(int x, int y, int originX, int originY, int fill, int quadrant) {
-	// when filling we also want to render the contour, otherwise there are
-	// artifacts in the pixels next to the borders
-	// top left quarter
-	// if (!quadrant || quadrant == 1) {
-	// 	SDL_RenderDrawPoint(renderer, originX - x, originY - y);
-	// 	SDL_RenderDrawPoint(renderer, originX - y, originY - x);
-	// }
-	// // top right quarter
-	// if (!quadrant || quadrant == 2) {
-	// 	SDL_RenderDrawPoint(renderer, originX + x, originY - y);
-	// 	SDL_RenderDrawPoint(renderer, originX + y, originY - x);
-	// }
-	// // bottom right quarter
-	// if (!quadrant || quadrant == 3) {
-	// 	SDL_RenderDrawPoint(renderer, originX + x, originY + y);
-	// 	SDL_RenderDrawPoint(renderer, originX + y, originY + x);
-	// }
-	// // bottom left quarter
-	// if (!quadrant || quadrant == 4) {
-	// 	SDL_RenderDrawPoint(renderer, originX - x, originY + y);
-	// 	SDL_RenderDrawPoint(renderer, originX - y, originY + x);
-	// }
-	// if (fill) {
-	// 	SDL_RenderDrawLine(renderer, originX - x, originY + y, originX + x, originY + y);
-	// 	SDL_RenderDrawLine(renderer, originX - x, originY - y, originX + x, originY - y);
-	// 	SDL_RenderDrawLine(renderer, originX - y, originY + x, originX + y, originY + x);
-	// 	SDL_RenderDrawLine(renderer, originX - y, originY - x, originX + y, originY - x);
-	// }
-}
-
-static void drawCircle(int originX, int originY, int radius, int fill, int quadrant) {
-	// Bresenham's circle algorithm
-	int x = 0;
-	int y = radius;
-	int decision = 3 - 2 * radius;
-	drawOctaves(x, y, originX, originY, fill, quadrant);
-	while (x < y) {
-		x++;
-		if (decision > 0) {
-			y--;
-			decision = decision + 4 * (x - y) + 10;
-		} else {
-			decision = decision + 4 * x + 6;
-		}
-		drawOctaves(x, y, originX, originY, fill, quadrant);
-	}
 }
 
 static OBJ primCircle(int argCount, OBJ *args) {
 	tftInit();
-	int originX = obj2int(args[0]);
-	int originY = obj2int(args[1]);
-	int radius = obj2int(args[2]);
-	setRenderColor(obj2int(args[3]));
+	if (!tftEnabled || !tft) return falseObj;
+
+	int x0 = obj2int(args[0]);
+	int y0 = obj2int(args[1]);
+	int r  = obj2int(args[2]);
+	uint16_t c = color24_to_rgb565(obj2int(args[3]));
 	int fill = (argCount > 4) ? (trueObj == args[4]) : true;
-	drawCircle(originX, originY, radius, fill, 0);
+
+	if (fill) tft->fillCircle(tft, x0, y0, r, c);
+	else      tft->drawCircle(tft, x0, y0, r, c);
+
 	return falseObj;
 }
 
 static OBJ primRoundedRect(int argCount, OBJ *args) {
 	tftInit();
+	if (!tftEnabled || !tft) return falseObj;
+
 	int x = obj2int(args[0]);
 	int y = obj2int(args[1]);
-	int width = obj2int(args[2]);
-	int height = obj2int(args[3]);
-	int radius = obj2int(args[4]);
-
-	if (2 * radius >= height) {
-		radius = height / 2 - 1;
-	}
-	if (2 * radius >= width) {
-		radius = width / 2 - 1;
-	}
-
-	setRenderColor(obj2int(args[5]));
+	int w = obj2int(args[2]);
+	int h = obj2int(args[3]);
+	int r = obj2int(args[4]);
+	uint16_t c = color24_to_rgb565(obj2int(args[5]));
 	int fill = (argCount > 6) ? (trueObj == args[6]) : true;
-	if (fill) {
-		drawRect(x, y + radius, width, height - 2 * radius, fill);
-		drawRect(x + radius, y, width - 2 * radius, height, fill);
-		drawCircle(x + radius, y + radius + 1, radius, fill, 0);
-		drawCircle(x + width - radius - 1, y + radius + 1, radius, fill, 0);
-		drawCircle(x + radius, y + height - radius - 1, radius, fill, 0);
-		drawCircle(x + width - radius - 1, y + height - radius - 1, radius, fill, 0);
-	} else {
-		// SDL_RenderDrawLine(renderer, x + radius, y, x + width - radius, y);
-		// SDL_RenderDrawLine(renderer, x + radius, y + height, x + width - radius, y + height);
-		// SDL_RenderDrawLine(renderer, x, y + radius, x, y + height - radius);
-		// SDL_RenderDrawLine(renderer, x + width, y + radius, x + width, y + height - radius);
-		drawCircle(x + radius, y + radius + 1, radius, 0, 1);
-		drawCircle(x + width - radius, y + radius, radius, 0, 2);
-		drawCircle(x + width - radius - 1, y + height - radius - 1, radius, 0, 3);
-		drawCircle(x + radius, y + height - radius - 1, radius, 0, 4);
-	}
+
+	// Match old behavior: clamp radius so it doesn't exceed half dims.
+	if (r < 0) r = 0;
+	if (2 * r >= h) r = h / 2;
+	if (2 * r >= w) r = w / 2;
+
+	if (fill) tft->fillRoundRect(tft, x, y, w, h, r, c);
+	else      tft->drawRoundRect(tft, x, y, w, h, r, c);
+
 	return falseObj;
-}
-
-static int triangleArea2x(int x[], int y[]) {
-	return (x[0] * (y[1] - y[2]) +
-			x[1] * (y[2] - y[0]) +
-			x[2] * (y[0] - y[1]));
-}
-
-static void debugTriangle(int x[], int y[], int increment) {
-	// DEBUG show vertex names
-	char txt[100];
-	int width, height;
-	//SDL_Color color = {255,255,255};
-
-	sprintf(txt, "v0(%d,%d)", x[0],y[0]);
-	drawText(txt, x[0], y[0], 0xFFFFFF, 1, true);
-
-	sprintf(txt, "v1(%d,%d)%s", x[1],y[1], increment == 1 ? "->" : "<-");
-	drawText(txt, x[1], y[1], 0xFFFFFF, 1, true);
-
-	sprintf(txt, "v2(%d,%d)", x[2],y[2]);
-	drawText(txt, x[2], y[2], 0xFFFFFF, 1, true);
-
-	sprintf(txt, "area: %d", abs(triangleArea2x(x,y)));
-	drawText(txt, 10, 20, 0xFFFFFF, 1, true);
-}
-
-static void sortVertices(int x[], int y[], int x0, int y0, int x1, int y1, int x2, int y2) {
-	// TODO this can be simplified
-	// Special case: two vertices share the same y
-	if (y0 == y1) {
-		if (y0 > y2) {
-			x[0] = x2; y[0] = y2;
-			x[1] = x1; y[1] = y1;
-			x[2] = x0; y[2] = y0;
-		} else {
-			x[0] = x0; y[0] = y0;
-			x[1] = x1; y[1] = y1;
-			x[2] = x2; y[2] = y2;
-		}
-		return;
-	} else if (y0 == y2) {
-		if (y0 > y1) {
-			x[0] = x1; y[0] = y1;
-			x[1] = x0; y[1] = y0;
-			x[2] = x2; y[2] = y2;
-		} else {
-			x[0] = x0; y[0] = y0;
-			x[1] = x2; y[1] = y2;
-			x[2] = x1; y[2] = y1;
-		}
-		return;
-	} else if (y1 == y2) {
-		if (y1 > y0) {
-			x[0] = x0; y[0] = y0;
-			x[1] = x1; y[1] = y1;
-			x[2] = x2; y[2] = y2;
-		} else {
-			x[0] = x2; y[0] = y2;
-			x[1] = x1; y[1] = y1;
-			x[2] = x0; y[2] = y0;
-		}
-		return;
-	}
-
-	// Find the topmost vertex
-	if ((y0 < y1) && (y0 < y2)) {
-		x[0] = x0; y[0] = y0;
-	} else if ((y1 < y0) && (y1 < y2)) {
-		x[0] = x1; y[0] = y1;
-	} else {
-		x[0] = x2; y[0] = y2;
-	}
-	// Find the middle vertex
-	if (((y0 > y2) && (y0 < y1)) || ((y0 < y2) && (y0 > y1))) {
-		x[1] = x0; y[1] = y0;
-	} else if (((y1 > y0) && (y1 < y2)) || ((y1 < y0) && (y1 > y2))) {
-		x[1] = x1; y[1] = y1;
-	} else {
-		x[1] = x2; y[1] = y2;
-	}
-	// Find the bottommost vertex
-	if ((y0 > y1) && (y0 > y2)) {
-		x[2] = x0; y[2] = y0;
-	} else if ((y1 > y0) && (y1 > y2)) {
-		x[2] = x1; y[2] = y1;
-	} else {
-		x[2] = x2; y[2] = y2;
-	}
 }
 
 static OBJ primTriangle(int argCount, OBJ *args) {
 	tftInit();
-	setRenderColor(obj2int(args[6]));
+	if (!tftEnabled || !tft) return falseObj;
 
-	int x[3];
-	int y[3];
-
-	// Sort the vertices so that x[0],y[0] is the topmost one and x[2],y[2] is
-	// the bottommost one
-	sortVertices(
-			x,
-			y,
-			obj2int(args[0]),
-			obj2int(args[1]),
-			obj2int(args[2]),
-			obj2int(args[3]),
-			obj2int(args[4]),
-			obj2int(args[5]));
-
-	// Just draw three lines
-	// SDL_RenderDrawLine(renderer, x[0], y[0], x[1], y[1]);
-	// SDL_RenderDrawLine(renderer, x[1], y[1], x[2], y[2]);
-	// SDL_RenderDrawLine(renderer, x[2], y[2], x[0], y[0]);
-
-	if (y[0] == y[1] && y[1] == y[2]) return falseObj;
-	if (x[0] == x[1] && x[1] == x[2]) return falseObj;
-
-	int area = triangleArea2x(x, y);
-	int increment = (area < 0) ? 1 : -1;
+	int x0 = obj2int(args[0]);
+	int y0 = obj2int(args[1]);
+	int x1 = obj2int(args[2]);
+	int y1 = obj2int(args[3]);
+	int x2 = obj2int(args[4]);
+	int y2 = obj2int(args[5]);
+	uint16_t c = color24_to_rgb565(obj2int(args[6]));
 	int fill = (argCount > 7) ? (trueObj == args[7]) : true;
-	if (fill) {
-		while ((abs(x[1]) < DEFAULT_WIDTH) && // This should never happen
-				(area != 0) &&
-				(increment != area/abs(area))) {
-			// SDL_RenderDrawLine(renderer, x[1], y[1], x[0], y[0]);
-			// SDL_RenderDrawLine(renderer, x[1], y[1], x[2], y[2]);
-			x[1] += increment;
-			area = triangleArea2x(x,y);
-		}
-	} else {
-		//debugTriangle(x, y, increment);
-	}
+
+	// Old code always drew outline first; we’ll keep that for compatibility.
+	tft->drawTriangle(tft, x0, y0, x1, y1, x2, y2, c);
+	if (fill) tft->fillTriangle(tft, x0, y0, x1, y1, x2, y2, c);
 
 	return falseObj;
 }
 
 static OBJ primText(int argCount, OBJ *args) {
 	tftInit();
+	if (!tftEnabled || !tft) return falseObj;
+
 	OBJ value = args[0];
 	char text[256];
+
 	int x = obj2int(args[1]);
 	int y = obj2int(args[2]);
 	int color24b = obj2int(args[3]);
 	int scale = (argCount > 4) ? obj2int(args[4]) : 2;
-	int wrap = (argCount > 5) ? (trueObj == args[5]) : true;
+	int wrap  = (argCount > 5) ? (trueObj == args[5]) : true;
 
 	if (IS_TYPE(value, StringType)) {
-		sprintf(text, "%s", obj2str(value));
+		snprintf(text, sizeof(text), "%s", obj2str(value));
 	} else if (trueObj == value) {
-		sprintf(text, "true");
+		snprintf(text, sizeof(text), "true");
 	} else if (falseObj == value) {
-		sprintf(text, "false");
+		snprintf(text, sizeof(text), "false");
 	} else if (isInt(value)) {
-		sprintf(text, "%d", obj2int(value));
+		snprintf(text, sizeof(text), "%d", obj2int(value));
+	} else {
+		snprintf(text, sizeof(text), "");
 	}
 
-	drawText(text, x, y, color24b, scale, wrap);
+	tft->setCursor(tft, x, y);
+	tft->setTextWrap(tft, wrap ? true : false);
+	tft->setTextSize(tft, (scale < 1) ? 1 : scale);
+	tft->setTextColorNoBG(tft, color24_to_rgb565(color24b));
+	tft->print(tft, text);
+
 	return falseObj;
 }
 
-// Simulating a 5x5 LED Matrix
+
+static OBJ primClear(int argCount, OBJ *args) {
+	  tftInit();
+        if (!tftEnabled || !tft) return falseObj;
+
+	tftClear();
+	return falseObj;
+}
+
+
+// --- Simulating a 5x5 LED Matrix (same API as before) ---
+
+
+
 
 void tftSetHugePixel(int x, int y, int state) {
 	// simulate a 5x5 array of square pixels like the micro:bit LED array
 	tftInit();
-	/*
-	if (!window) return;
+	if (!tftEnabled || !tft) return;
 
-	int width, height;
-	SDL_GetWindowSize(window, &width, &height);
+	int width  = tft->width;
+	int height = tft->height;
 
 	int minDimension, xInset = 0, yInset = 0;
 	if (width > height) {
@@ -601,20 +309,16 @@ void tftSetHugePixel(int x, int y, int state) {
 		minDimension = width;
 		yInset = (height - width) / 2;
 	}
+
 	int lineWidth = (minDimension > 60) ? 3 : 1;
 	int squareSize = (minDimension - (6 * lineWidth)) / 5;
 
-	setRenderColor(state ? 0x00FF00 : 0x000000);
+	uint16_t c = state ? ArduinoGFX_rgb565(0, 255, 0) : ArduinoGFX_rgb565(0, 0, 0);
 
-	SDL_Rect rect = {
-		xInset + ((x - 1) * squareSize) + (x * lineWidth),
-		yInset + ((y - 1) * squareSize) + (y * lineWidth),
-		squareSize,
-		squareSize,
-	};
+	int rx = xInset + ((x - 1) * squareSize) + (x * lineWidth);
+	int ry = yInset + ((y - 1) * squareSize) + (y * lineWidth);
 
-	SDL_RenderFillRect(renderer, &rect);
-	*/
+	tft->fillRect(tft, rx, ry, squareSize, squareSize, c);
 }
 
 void tftSetHugePixelBits(int bits) {
@@ -629,36 +333,29 @@ void tftSetHugePixelBits(int bits) {
 	}
 }
 
-// TFT Touch Primitives
+// --- TFT Touch Primitives (no input backend here) ---
 
 static OBJ primTftTouched(int argCount, OBJ *args) {
+	(void)argCount; (void)args;
 	return mouseDown ? trueObj : falseObj;
 }
 
-
-
 static OBJ primTftTouchX(int argCount, OBJ *args) {
-//	SDL_GetMouseState(&mouseX, &mouseY);
+	(void)argCount; (void)args;
 	return int2obj(mouseDown ? mouseX : -1);
 }
 
 static OBJ primTftTouchY(int argCount, OBJ *args) {
-//	SDL_GetMouseState(&mouseX, &mouseY);
+	(void)argCount; (void)args;
 	return int2obj(mouseDown ? mouseY : -1);
 }
 
 static OBJ primTftTouchPressure(int argCount, OBJ *args) {
-	int mousePressure;
-	if (mouseDown) {
-		mousePressure = (millisecs() - mouseDownTime);
-		if (mousePressure > 4095) mousePressure = 4095;
-	} else {
-		mousePressure = -1;
-	}
-	return int2obj(mousePressure);
+	(void)argCount; (void)args;
+	return int2obj(mouseDown ? (millisecs() - mouseDownTime) : -1);
 }
 
-// Primitives
+// --- Primitives registration ---
 
 static PrimEntry entries[] = {
 	{"enableDisplay", primEnableDisplay},
@@ -671,6 +368,7 @@ static PrimEntry entries[] = {
 	{"circle", primCircle},
 	{"triangle", primTriangle},
 	{"text", primText},
+	{"clear", primClear},
 	{"tftTouched", primTftTouched},
 	{"tftTouchX", primTftTouchX},
 	{"tftTouchY", primTftTouchY},
