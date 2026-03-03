@@ -42,3 +42,27 @@ LDFLAGS="-m32 -L/usr/local/lib /usr/local/lib/libSDL2.a -lm -lpthread" \
 
 make -j$(nproc)
 ```
+
+
+
+```
+wget https://zlib.net/current/zlib.tar.gz
+tar zxvf zlib.tar.gz
+cd zlib-1.3.2
+
+CFLAGS="-m32 -fPIC" ./configure --static
+
+make -j$(nproc)  
+make install
+
+```
+
+```
+wget https://download.sourceforge.net/libpng/libpng-1.6.40.tar.gz  
+tar xvf libpng-1.6.40.tar.gz  
+cd libpng-1.6.40
+
+CFLAGS="-m32" \
+LDFLAGS="-m32 -L/usr/local/libs" \
+./configure --disable-shared --enable-static
+```

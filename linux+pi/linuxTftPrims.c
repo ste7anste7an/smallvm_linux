@@ -9,9 +9,8 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
 
-//#include <SDL2/SDL.h>
+#include <SDL2/SDL.h>
 
 #include "mem.h"
 #include "interp.h"
@@ -26,8 +25,8 @@ static int mouseY = -1;
 static int mouseDownTime = 0;
 
 static int tftEnabled = false;
-//static SDL_Window *window;
-//static SDL_Renderer* renderer;
+static SDL_Window *window;
+static SDL_Renderer* renderer;
 static int lastRefreshTime = 0;
 
 extern int KEY_SCANCODE[];
@@ -35,15 +34,14 @@ extern int KEY_SCANCODE[];
 // Helper Functions
 
 static void setRenderColor(int color24b) {
-/*	SDL_SetRenderDrawColor(
+	SDL_SetRenderDrawColor(
 		renderer, (color24b >> 16) & 255, (color24b >> 8) & 255, color24b & 255, 255);
-		*/
 }
 
 void tftClear() {
 	tftInit();
 	setRenderColor(0);
-	//SDL_RenderClear(renderer);
+	SDL_RenderClear(renderer);
 }
 
 // Text Rendering with PangoCairo
@@ -125,12 +123,12 @@ static void drawText(char *s, int x, int y, int color24b, int scale, int wrapFla
 
 #else
 
-//#include <SDL2/SDL_ttf.h>
+#include <SDL2/SDL_ttf.h>
 
 static int ttfInitialized = false;
 
-//#include "linuxFont.h"
-/*
+#include "linuxFont.h"
+
 static TTF_Font* openTTFFont(int pointSize) {
 	TTF_Font *result = TTF_OpenFontRW(
 		SDL_RWFromConstMem(LiberationMono_Regular_ttf, LiberationMono_Regular_ttf_len),
@@ -139,21 +137,20 @@ static TTF_Font* openTTFFont(int pointSize) {
 	if (!result) printf("Font open error: %s\n", TTF_GetError());
 	return result;
 }
-*/
+
 static void drawText(char *s, int x, int y, int color24b, int scale, int wrapFlag) {
 	// Draw the given string with the given position, color, scale and wrapFlag
 	// TODO wrap is ignored for now
 
 	if (!ttfInitialized) { // initialize TTF before first use
-		// int err = TTF_Init();
-		// if (err) {
-		// 	printf("TTF_Init error: %s\n", TTF_GetError());
-		// 	return;
-		// }
+		int err = TTF_Init();
+		if (err) {
+			printf("TTF_Init error: %s\n", TTF_GetError());
+			return;
+		}
 		ttfInitialized = true;
 	}
 
-	/* 
 	SDL_Color color = { color24b >> 16, (color24b >> 8) & 255, color24b & 255 };
 
 	TTF_Font* font = openTTFFont(10 * scale);
@@ -171,7 +168,6 @@ static void drawText(char *s, int x, int y, int color24b, int scale, int wrapFla
 	SDL_FreeSurface(surface);
 	SDL_DestroyTexture(message);
 	TTF_CloseFont(font);
-	*/
 }
 
 #endif
@@ -185,7 +181,6 @@ static void initKeys() {
 }
 
 static void processEvents() {
-	/*
 	SDL_Event e;
 	while (SDL_PollEvent(&e) > 0) {
 		switch(e.type) {
@@ -218,29 +213,28 @@ static void processEvents() {
 				break;
 		}
 	}
-		*/
 }
 
 void tftInit() {
 	if (!tftEnabled) {
 		lastRefreshTime = millisecs();
 //		SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
-// if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) {
-// 	// Unrecoverable error, exit here.
-// 	printf("SDL_Init failed: %s\n", SDL_GetError());
-// 	return;
-// }
-// 		window = SDL_CreateWindow("MicroBlocks for Linux",
-// 				SDL_WINDOWPOS_UNDEFINED,
-// 				SDL_WINDOWPOS_UNDEFINED,
-// 				DEFAULT_WIDTH,
-// 				DEFAULT_HEIGHT,
-// 				SDL_WINDOW_RESIZABLE);
+if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) {
+	// Unrecoverable error, exit here.
+	printf("SDL_Init failed: %s\n", SDL_GetError());
+	return;
+}
+		window = SDL_CreateWindow("MicroBlocks for Linux",
+				SDL_WINDOWPOS_UNDEFINED,
+				SDL_WINDOWPOS_UNDEFINED,
+				DEFAULT_WIDTH,
+				DEFAULT_HEIGHT,
+				SDL_WINDOW_RESIZABLE);
 
-// 		renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
-// 		SDL_RenderClear(renderer);
-// 		initKeys();
-// 		tftEnabled = true;
+		renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+		SDL_RenderClear(renderer);
+		initKeys();
+		tftEnabled = true;
 	}
 }
 
@@ -250,7 +244,7 @@ void updateMicrobitDisplay() {
 		uint32_t now = millisecs();
 		if (now < lastRefreshTime) lastRefreshTime = 0; // clock wrap
 		if ((now - lastRefreshTime > REFRESH_MSECS)) {
-	//		SDL_RenderPresent(renderer);
+			SDL_RenderPresent(renderer);
 			lastRefreshTime = now;
 		}
 	}
@@ -262,26 +256,26 @@ static OBJ primEnableDisplay(int argCount, OBJ *args) {
 	if (trueObj == args[0]) {
 		tftInit();
 	} else {
-		// if (window) {
-		// 	// SDL_DestroyWindow(window);
-		// 	// SDL_Quit();
-		// 	tftEnabled = false;
-		// }
+		if (window) {
+			SDL_DestroyWindow(window);
+			SDL_Quit();
+			tftEnabled = false;
+		}
 	}
 	return falseObj;
 }
 
 static OBJ primGetWidth(int argCount, OBJ *args) {
-//	if (!window) return zeroObj;
+	if (!window) return zeroObj;
 	int w, h;
-	//SDL_GetWindowSize(window, &w, &h);
+	SDL_GetWindowSize(window, &w, &h);
 	return int2obj(w);
 }
 
 static OBJ primGetHeight(int argCount, OBJ *args) {
-	//if (!window) return zeroObj;
+	if (!window) return zeroObj;
 	int w, h;
-	//SDL_GetWindowSize(window, &w, &h);
+	SDL_GetWindowSize(window, &w, &h);
 	return int2obj(h);
 }
 
@@ -289,8 +283,8 @@ static OBJ primSetPixel(int argCount, OBJ *args) {
 	tftInit();
 	int x = obj2int(args[0]);
 	int y = obj2int(args[1]);
-	// setRenderColor(obj2int(args[2]));
-	// SDL_RenderDrawPoint(renderer, x, y);
+	setRenderColor(obj2int(args[2]));
+	SDL_RenderDrawPoint(renderer, x, y);
 	return falseObj;
 }
 
@@ -300,18 +294,18 @@ static OBJ primLine(int argCount, OBJ *args) {
 	int y0 = obj2int(args[1]);
 	int x1 = obj2int(args[2]);
 	int y1 = obj2int(args[3]);
-	// setRenderColor(obj2int(args[4]));
-	// SDL_RenderDrawLine(renderer, x0, y0, x1, y1);
+	setRenderColor(obj2int(args[4]));
+	SDL_RenderDrawLine(renderer, x0, y0, x1, y1);
 	return falseObj;
 }
 
 static void drawRect(int x, int y, int width, int height, int fill) {
-//	SDL_Rect rect = { x, y, width, height };
-	// if (fill) {
-	// 	SDL_RenderFillRect(renderer, &rect);
-	// } else {
-	// 	SDL_RenderDrawRect(renderer, &rect);
-	// }
+	SDL_Rect rect = { x, y, width, height };
+	if (fill) {
+		SDL_RenderFillRect(renderer, &rect);
+	} else {
+		SDL_RenderDrawRect(renderer, &rect);
+	}
 }
 
 static OBJ primRect(int argCount, OBJ *args) {
@@ -330,31 +324,31 @@ static void drawOctaves(int x, int y, int originX, int originY, int fill, int qu
 	// when filling we also want to render the contour, otherwise there are
 	// artifacts in the pixels next to the borders
 	// top left quarter
-	// if (!quadrant || quadrant == 1) {
-	// 	SDL_RenderDrawPoint(renderer, originX - x, originY - y);
-	// 	SDL_RenderDrawPoint(renderer, originX - y, originY - x);
-	// }
-	// // top right quarter
-	// if (!quadrant || quadrant == 2) {
-	// 	SDL_RenderDrawPoint(renderer, originX + x, originY - y);
-	// 	SDL_RenderDrawPoint(renderer, originX + y, originY - x);
-	// }
-	// // bottom right quarter
-	// if (!quadrant || quadrant == 3) {
-	// 	SDL_RenderDrawPoint(renderer, originX + x, originY + y);
-	// 	SDL_RenderDrawPoint(renderer, originX + y, originY + x);
-	// }
-	// // bottom left quarter
-	// if (!quadrant || quadrant == 4) {
-	// 	SDL_RenderDrawPoint(renderer, originX - x, originY + y);
-	// 	SDL_RenderDrawPoint(renderer, originX - y, originY + x);
-	// }
-	// if (fill) {
-	// 	SDL_RenderDrawLine(renderer, originX - x, originY + y, originX + x, originY + y);
-	// 	SDL_RenderDrawLine(renderer, originX - x, originY - y, originX + x, originY - y);
-	// 	SDL_RenderDrawLine(renderer, originX - y, originY + x, originX + y, originY + x);
-	// 	SDL_RenderDrawLine(renderer, originX - y, originY - x, originX + y, originY - x);
-	// }
+	if (!quadrant || quadrant == 1) {
+		SDL_RenderDrawPoint(renderer, originX - x, originY - y);
+		SDL_RenderDrawPoint(renderer, originX - y, originY - x);
+	}
+	// top right quarter
+	if (!quadrant || quadrant == 2) {
+		SDL_RenderDrawPoint(renderer, originX + x, originY - y);
+		SDL_RenderDrawPoint(renderer, originX + y, originY - x);
+	}
+	// bottom right quarter
+	if (!quadrant || quadrant == 3) {
+		SDL_RenderDrawPoint(renderer, originX + x, originY + y);
+		SDL_RenderDrawPoint(renderer, originX + y, originY + x);
+	}
+	// bottom left quarter
+	if (!quadrant || quadrant == 4) {
+		SDL_RenderDrawPoint(renderer, originX - x, originY + y);
+		SDL_RenderDrawPoint(renderer, originX - y, originY + x);
+	}
+	if (fill) {
+		SDL_RenderDrawLine(renderer, originX - x, originY + y, originX + x, originY + y);
+		SDL_RenderDrawLine(renderer, originX - x, originY - y, originX + x, originY - y);
+		SDL_RenderDrawLine(renderer, originX - y, originY + x, originX + y, originY + x);
+		SDL_RenderDrawLine(renderer, originX - y, originY - x, originX + y, originY - x);
+	}
 }
 
 static void drawCircle(int originX, int originY, int radius, int fill, int quadrant) {
@@ -411,10 +405,10 @@ static OBJ primRoundedRect(int argCount, OBJ *args) {
 		drawCircle(x + radius, y + height - radius - 1, radius, fill, 0);
 		drawCircle(x + width - radius - 1, y + height - radius - 1, radius, fill, 0);
 	} else {
-		// SDL_RenderDrawLine(renderer, x + radius, y, x + width - radius, y);
-		// SDL_RenderDrawLine(renderer, x + radius, y + height, x + width - radius, y + height);
-		// SDL_RenderDrawLine(renderer, x, y + radius, x, y + height - radius);
-		// SDL_RenderDrawLine(renderer, x + width, y + radius, x + width, y + height - radius);
+		SDL_RenderDrawLine(renderer, x + radius, y, x + width - radius, y);
+		SDL_RenderDrawLine(renderer, x + radius, y + height, x + width - radius, y + height);
+		SDL_RenderDrawLine(renderer, x, y + radius, x, y + height - radius);
+		SDL_RenderDrawLine(renderer, x + width, y + radius, x + width, y + height - radius);
 		drawCircle(x + radius, y + radius + 1, radius, 0, 1);
 		drawCircle(x + width - radius, y + radius, radius, 0, 2);
 		drawCircle(x + width - radius - 1, y + height - radius - 1, radius, 0, 3);
@@ -433,7 +427,7 @@ static void debugTriangle(int x[], int y[], int increment) {
 	// DEBUG show vertex names
 	char txt[100];
 	int width, height;
-	//SDL_Color color = {255,255,255};
+	SDL_Color color = {255,255,255};
 
 	sprintf(txt, "v0(%d,%d)", x[0],y[0]);
 	drawText(txt, x[0], y[0], 0xFFFFFF, 1, true);
@@ -532,9 +526,9 @@ static OBJ primTriangle(int argCount, OBJ *args) {
 			obj2int(args[5]));
 
 	// Just draw three lines
-	// SDL_RenderDrawLine(renderer, x[0], y[0], x[1], y[1]);
-	// SDL_RenderDrawLine(renderer, x[1], y[1], x[2], y[2]);
-	// SDL_RenderDrawLine(renderer, x[2], y[2], x[0], y[0]);
+	SDL_RenderDrawLine(renderer, x[0], y[0], x[1], y[1]);
+	SDL_RenderDrawLine(renderer, x[1], y[1], x[2], y[2]);
+	SDL_RenderDrawLine(renderer, x[2], y[2], x[0], y[0]);
 
 	if (y[0] == y[1] && y[1] == y[2]) return falseObj;
 	if (x[0] == x[1] && x[1] == x[2]) return falseObj;
@@ -546,8 +540,8 @@ static OBJ primTriangle(int argCount, OBJ *args) {
 		while ((abs(x[1]) < DEFAULT_WIDTH) && // This should never happen
 				(area != 0) &&
 				(increment != area/abs(area))) {
-			// SDL_RenderDrawLine(renderer, x[1], y[1], x[0], y[0]);
-			// SDL_RenderDrawLine(renderer, x[1], y[1], x[2], y[2]);
+			SDL_RenderDrawLine(renderer, x[1], y[1], x[0], y[0]);
+			SDL_RenderDrawLine(renderer, x[1], y[1], x[2], y[2]);
 			x[1] += increment;
 			area = triangleArea2x(x,y);
 		}
@@ -587,7 +581,6 @@ static OBJ primText(int argCount, OBJ *args) {
 void tftSetHugePixel(int x, int y, int state) {
 	// simulate a 5x5 array of square pixels like the micro:bit LED array
 	tftInit();
-	/*
 	if (!window) return;
 
 	int width, height;
@@ -614,7 +607,6 @@ void tftSetHugePixel(int x, int y, int state) {
 	};
 
 	SDL_RenderFillRect(renderer, &rect);
-	*/
 }
 
 void tftSetHugePixelBits(int bits) {
@@ -635,15 +627,13 @@ static OBJ primTftTouched(int argCount, OBJ *args) {
 	return mouseDown ? trueObj : falseObj;
 }
 
-
-
 static OBJ primTftTouchX(int argCount, OBJ *args) {
-//	SDL_GetMouseState(&mouseX, &mouseY);
+	SDL_GetMouseState(&mouseX, &mouseY);
 	return int2obj(mouseDown ? mouseX : -1);
 }
 
 static OBJ primTftTouchY(int argCount, OBJ *args) {
-//	SDL_GetMouseState(&mouseX, &mouseY);
+	SDL_GetMouseState(&mouseX, &mouseY);
 	return int2obj(mouseDown ? mouseY : -1);
 }
 
