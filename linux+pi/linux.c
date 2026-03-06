@@ -24,6 +24,226 @@
 #include <unistd.h>
 #include <signal.h>
 
+
+/* linux.c — serial routines using /dev/ttyUSB0 @ 115200 (8N1), non-blocking
+ *
+ * Call serial_init() once at startup (it opens/configures the port).
+ * Then use recvBytes/canReadByte/sendByte/sendBytes as before.
+ *
+ * Uses an internal 256-byte RX buffer.
+ */
+
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <termios.h>
+#include <unistd.h>
+
+#ifndef uint8
+typedef uint8_t uint8;
+#endif
+
+static int serial_fd = -1;
+
+/* Internal 256-byte receive buffer */
+static uint8 rx_buf[256];
+static int   rx_len = 0;
+static int   rx_pos = 0;
+
+static speed_t baud_to_termios(int baud)
+{
+    switch(baud) {
+        case 9600: return B9600;
+        case 19200: return B19200;
+        case 38400: return B38400;
+        case 57600: return B57600;
+        case 115200: return B115200;
+        case 230400: return B230400;
+        case 460800: return B460800;
+        case 921600: return B921600;
+        default: return 0;
+    }
+}
+
+/* Open and configure /dev/ttyUSB0 @ 115200, 8N1, raw, no flow control.
+ * Returns 0 on success, -1 on failure.
+ */
+int serial_init(void)
+{
+    const char *dev = "/dev/ttyUSB0";
+    const int baud = 115200;
+
+    serial_fd = open(dev, O_RDWR | O_NOCTTY | O_NONBLOCK);
+    if(serial_fd < 0) {
+        perror("open(/dev/ttyUSB0)");
+        return -1;
+    }
+
+    struct termios tio;
+    if(tcgetattr(serial_fd, &tio) != 0) {
+        perror("tcgetattr");
+        close(serial_fd);
+        serial_fd = -1;
+        return -1;
+    }
+
+    cfmakeraw(&tio);
+
+    /* 8N1 */
+    tio.c_cflag &= ~PARENB;
+    tio.c_cflag &= ~CSTOPB;
+    tio.c_cflag &= ~CSIZE;
+    tio.c_cflag |= CS8;
+
+    /* Enable receiver, ignore modem control lines */
+    tio.c_cflag |= (CLOCAL | CREAD);
+
+    /* No HW flow control */
+#ifdef CRTSCTS
+    tio.c_cflag &= ~CRTSCTS;
+#endif
+    tio.c_cflag &= ~HUPCL;
+    /* No SW flow control */
+    tio.c_iflag &= ~(IXON | IXOFF | IXANY);
+
+    speed_t spd = baud_to_termios(baud);
+    if(spd == 0) {
+        fprintf(stderr, "Unsupported baud rate: %d\n", baud);
+        close(serial_fd);
+        serial_fd = -1;
+        return -1;
+    }
+
+    cfsetispeed(&tio, spd);
+    cfsetospeed(&tio, spd);
+
+    /* Non-blocking behavior; reads return immediately */
+    tio.c_cc[VMIN]  = 0;
+    tio.c_cc[VTIME] = 0;
+
+    if(tcsetattr(serial_fd, TCSANOW, &tio) != 0) {
+        perror("tcsetattr");
+        close(serial_fd);
+        serial_fd = -1;
+        return -1;
+    }
+
+    tcflush(serial_fd, TCIOFLUSH);
+
+    /* reset rx buffer */
+    rx_len = 0;
+    rx_pos = 0;
+
+    return 0;
+}
+
+static int refill_rx(void)
+{
+    rx_len = 0;
+    rx_pos = 0;
+
+    for(;;) {
+        ssize_t n = read(serial_fd, rx_buf, sizeof(rx_buf));
+        if(n > 0) { rx_len = (int)n; return rx_len; }
+        if(n == 0) return 0;
+        if(errno == EINTR) continue;
+        if(errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+        return 0; /* treat other errors as no data (or handle/log) */
+    }
+}
+
+/* Receive up to `count` bytes into `buf`.
+ * Returns number of bytes copied (0 if none available right now).
+ */
+int recvBytes(uint8 *buf, int count)
+{
+    if(serial_fd < 0 || !buf || count <= 0) return 0;
+
+    int copied = 0;
+
+    while(copied < count) {
+        if(rx_pos >= rx_len) {
+            if(refill_rx() == 0) break;
+        }
+
+        int avail = rx_len - rx_pos;
+        int need  = count - copied;
+        int ncopy = (avail < need) ? avail : need;
+
+        memcpy(buf + copied, rx_buf + rx_pos, (size_t)ncopy);
+        rx_pos += ncopy;
+        copied += ncopy;
+    }
+
+    return copied;
+}
+
+/* True if at least one byte can be read without blocking.
+ * Checks internal buffer first, then kernel FIONREAD.
+ */
+int canReadByte(void)
+{
+    if(serial_fd < 0) return 0;
+    if(rx_pos < rx_len) return 1;
+
+    int bytesAvailable = 0;
+    if(ioctl(serial_fd, FIONREAD, &bytesAvailable) != 0) return 0;
+    return (bytesAvailable > 0);
+}
+
+/* Send exactly one byte.
+ * Returns 1 on success, 0 if would-block, -1 on error.
+ */
+int sendByte(char aByte)
+{
+    if(serial_fd < 0) return -1;
+
+    for(;;) {
+        ssize_t w = write(serial_fd, &aByte, 1);
+        if(w == 1) return 1;
+        if(w < 0 && errno == EINTR) continue;
+        if(w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return 0;
+        return -1;
+    }
+}
+
+/* Send bytes buf[start..end-1].
+ * Returns number of bytes written, 0 if would-block, -1 on error.
+ */
+int sendBytes(uint8 *buf, int start, int end)
+{
+    if(serial_fd < 0) return -1;
+    if(!buf) return -1;
+    if(start < 0) start = 0;
+    if(end < start) return 0;
+
+    size_t len = (size_t)(end - start);
+    const uint8 *p = &buf[start];
+
+    for(;;) {
+        ssize_t w = write(serial_fd, p, len);
+        if(w >= 0) return (int)w;
+        if(errno == EINTR) continue;
+        if(errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+        return -1;
+    }
+}
+
+/* Optional: call on shutdown */
+void serial_close(void)
+{
+    if(serial_fd >= 0) {
+        close(serial_fd);
+        serial_fd = -1;
+    }
+}
+
+
 #ifdef ARDUINO_RASPBERRY_PI
 #include <wiringPi.h>
 #include <wiringSerial.h>
@@ -70,68 +290,11 @@ void delay(int ms) {
 
 // Communication/System Functions
 
-static int pty; // pseudo terminal used for communication with the IDE
-
-int serialConnected() {
-	return pty > -1;
-}
-
-static void makePtyFile() {
-	FILE *file = fopen("/tmp/ublocksptyname", "w");
-	if (file) {
-		fprintf(file, "%s", (char*) ptsname(pty));
-		fclose(file);
-	}
-}
+int serialConnected() { return serial_fd >= 0; }
 
 static void exitGracefully() {
 	remove("/tmp/ublocksptyname");
 	exit(0);
-}
-
-static void openPseudoTerminal() {
-	pty = posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK);
-	if (-1 == pty) {
-		perror("Error opening pseudo terminal\n");
-		exit(-1);
-	}
-
-	struct termios settings;
-	tcgetattr(pty, &settings);
-	cfmakeraw(&settings);
-	tcsetattr(pty, TCSANOW, &settings);
-
- 	grantpt(pty);
- 	unlockpt(pty);
-
-	makePtyFile();
-}
-
-int recvBytes(uint8 *buf, int count) {
-	int readCount = read(pty, buf, count);
-	if (readCount < 0) readCount = 0;
-	return readCount;
-}
-
-int canReadByte() {
-	int bytesAvailable;
-	ioctl(pty, FIONREAD, &bytesAvailable);
-	return (bytesAvailable > 0);
-}
-
-int sendByte(char aByte) {
-	
-	return write(pty, &aByte, 1);
-	
-}
-
-
-
-int sendBytes(uint8 *buf, int start, int end) {
-	// sodb
-
-	// return write(pty, &aByte, 1);
-	 return write(pty, &buf[start], end - start);
 }
 
 
@@ -232,7 +395,7 @@ void stopServos() {}
 // MB
 //void tftSetHugePixel(int x, int y, int value) {};
 //void tftSetHugePixelBits(int bits) {};
-//int ideConnected() {return 1;};
+int ideConnected() {return 1;};
 
 //void stopTone() {};
 //void primSetUserLED(OBJ *args) {};
@@ -299,10 +462,13 @@ int main(int argc, char *argv[]) {
 	signal(SIGSEGV, segfault);
 	signal(SIGINT, exit);
 	atexit(exitGracefully);
-	openPseudoTerminal();
-	printf(
-		"Starting Linux MicroBlocks... Connect on %s\n",
-		(char*) ptsname(pty));
+
+
+        if(serial_init() != 0) {
+           fprintf(stderr, "serial_init failed\n");
+           return 1;
+        }
+
 #ifdef ARDUINO_RASPBERRY_PI
 	wiringPiSetup();
 	initPins();

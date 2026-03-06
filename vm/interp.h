@@ -438,6 +438,7 @@ typedef enum {
 	BLEPrims,
 	RadioPrims,
 	TFTPrims,
+        LVGLPrims,
 	HIDPrims,
 	CameraPrims,
 	OneWirePrims,
@@ -458,6 +459,7 @@ void addNetPrims();
 void addBLEPrims();
 void addRadioPrims();
 void addTFTPrims();
+void addLVGLPrims();
 void addHIDPrims();
 void addCameraPrims();
 void addOneWirePrims();

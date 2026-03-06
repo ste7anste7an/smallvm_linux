@@ -212,6 +212,7 @@ void primsInit() {
 	addSensorPrims();
 	addSerialPrims();
 	addTFTPrims();
+        //addLVGLPrims();
 	addVarPrims();
 	addHIDPrims();
 	addOneWirePrims();
